@@ -1,7 +1,6 @@
 """
 动态RAG模块 - 实时检索权威数据库
 支持arXiv、CrossRef等学术数据源的真实检索
-集成中文查询智能翻译功能
 """
 
 import os
@@ -105,135 +104,6 @@ class RAGCache:
                 
         except Exception as e:
             print(f"❌ 缓存写入错误: {e}")
-
-class QueryTranslator:
-    """查询翻译器 - 将中文辩论主题转换为适合学术检索的英文查询"""
-    
-    def __init__(self, llm: ChatDeepSeek):
-        self.llm = llm
-        self.translation_prompt = ChatPromptTemplate.from_messages([
-            ("system", """你是一个专业的学术检索查询翻译专家。你的任务是将中文辩论主题转换为适合在arXiv、CrossRef等国际学术数据库中搜索的英文关键词。
-
-翻译要求：
-1. 提取核心学术概念，转换为标准英文学术术语
-2. 去除辩论性语言，保留客观研究主题
-3. 使用简洁的关键词组合，不要完整句子
-4. 优先使用在学术界通用的英文术语
-5. 考虑同义词和相关概念
-
-示例：
-中文："人工智能是否会威胁人类就业？"
-英文："artificial intelligence employment impact automation job displacement"
-
-中文："核能发电是解决气候变化的最佳方案吗？"
-英文："nuclear power climate change mitigation renewable energy policy"
-
-请为以下中文主题提供最佳的英文学术检索查询："""),
-            ("user", "中文主题：{chinese_topic}\n\n请提供3-6个核心英文关键词，用空格分隔：")
-        ])
-    
-    def translate_to_academic_query(self, chinese_topic: str) -> str:
-        """将中文主题翻译为英文学术查询"""
-        try:
-            # 首先检查是否已经是英文
-            if self._is_english(chinese_topic):
-                return self._extract_keywords(chinese_topic)
-            
-            pipe = self.translation_prompt | self.llm | StrOutputParser()
-            
-            english_query = pipe.invoke({"chinese_topic": chinese_topic})
-            
-            # 清理响应，提取关键词
-            keywords = self._clean_query_response(english_query)
-            
-            print(f"🔤 查询翻译: '{chinese_topic}' -> '{keywords}'")
-            return keywords
-            
-        except Exception as e:
-            print(f"❌ 查询翻译失败: {e}")
-            # 回退到简单翻译
-            return self._fallback_translation(chinese_topic)
-    
-    def _is_english(self, text: str) -> bool:
-        """检查文本是否主要为英文"""
-        english_chars = sum(1 for c in text if c.isascii() and c.isalpha())
-        total_chars = sum(1 for c in text if c.isalpha())
-        return total_chars > 0 and english_chars / total_chars > 0.7
-    
-    def _extract_keywords(self, english_text: str) -> str:
-        """从英文文本中提取关键词"""
-        # 移除常见停用词和疑问词
-        stop_words = {'is', 'are', 'will', 'can', 'should', 'does', 'do', 'the', 'a', 'an', 
-                     'how', 'what', 'why', 'where', 'when', 'which', 'whether', 'if'}
-        
-        words = english_text.lower().replace('?', '').replace('!', '').split()
-        keywords = [word.strip('.,!?()[]{}') for word in words 
-                   if word.lower() not in stop_words and len(word) > 2]
-        
-        return ' '.join(keywords[:6])  # 限制关键词数量
-    
-    def _clean_query_response(self, response: str) -> str:
-        """清理LLM响应，提取关键词"""
-        # 移除可能的解释文字，只保留关键词
-        lines = response.strip().split('\n')
-        for line in lines:
-            if ':' in line:
-                # 如果有冒号，取冒号后的部分
-                keywords = line.split(':', 1)[1].strip()
-            else:
-                keywords = line.strip()
-            
-            # 验证是否是关键词格式
-            if len(keywords.split()) <= 8 and not keywords.startswith('中文') and not keywords.startswith('英文'):
-                return keywords
-        
-        # 如果没找到合适的行，返回整个响应的前6个词
-        words = response.replace('\n', ' ').split()
-        return ' '.join(words[:6])
-    
-    def _fallback_translation(self, chinese_topic: str) -> str:
-        """回退翻译方案"""
-        # 简单的词汇映射
-        translation_map = {
-            '人工智能': 'artificial intelligence',
-            '机器学习': 'machine learning',
-            '深度学习': 'deep learning',
-            '就业': 'employment',
-            '工作': 'job work',
-            '核能': 'nuclear power',
-            '气候变化': 'climate change',
-            '环境保护': 'environmental protection',
-            '经济': 'economics economy',
-            '政策': 'policy',
-            '技术': 'technology',
-            '社会': 'society social',
-            '伦理': 'ethics',
-            '道德': 'moral',
-            '可持续发展': 'sustainable development',
-            '能源': 'energy',
-            '教育': 'education',
-            '医疗': 'healthcare medical',
-            '自动化': 'automation',
-            '机器人': 'robotics',
-            '生物技术': 'biotechnology',
-            '基因编辑': 'gene editing CRISPR',
-            '区块链': 'blockchain',
-            '量子计算': 'quantum computing',
-            '自动驾驶': 'autonomous driving',
-            '虚拟现实': 'virtual reality',
-            '增强现实': 'augmented reality'
-        }
-        
-        keywords = []
-        for chinese, english in translation_map.items():
-            if chinese in chinese_topic:
-                keywords.extend(english.split())
-        
-        if not keywords:
-            # 如果没有匹配，使用通用研究词汇
-            keywords = ['research', 'analysis', 'study', 'technology', 'society']
-        
-        return ' '.join(keywords[:6])
 
 class ArxivSearcher:
     """arXiv学术论文检索器"""
@@ -504,7 +374,6 @@ class DynamicRAGModule:
         self.arxiv_searcher = ArxivSearcher()
         self.crossref_searcher = CrossRefSearcher()
         self.enhancer = RAGEnhancer(llm)
-        self.query_translator = QueryTranslator(llm)  # 新增查询翻译器
         
         # 初始化向量存储（可选，用于更复杂的相似性检索）
         try:
@@ -520,16 +389,13 @@ class DynamicRAGModule:
                               topic: str, 
                               sources: List[str] = ["arxiv", "crossref"],
                               max_results_per_source: int = None) -> List[SearchResult]:
-        """搜索学术数据源（支持中文查询自动翻译）"""
+        """搜索学术数据源"""
         
         if max_results_per_source is None:
             max_results_per_source = RAG_CONFIG["max_results_per_source"]
         
-        # 将中文主题翻译为英文学术查询
-        english_query = self.query_translator.translate_to_academic_query(topic)
-        
-        # 检查缓存（使用英文查询作为缓存键）
-        cached_results = self.cache.get_cached_results(english_query, sources)
+        # 检查缓存
+        cached_results = self.cache.get_cached_results(topic, sources)
         if cached_results:
             print(f"✅ 使用缓存结果: {len(cached_results)} 篇论文")
             return cached_results
@@ -538,28 +404,24 @@ class DynamicRAGModule:
         
         # arXiv检索
         if "arxiv" in sources:
-            print(f"🔍 arXiv检索中文主题: {topic}")
-            print(f"🔍 arXiv使用英文查询: {english_query}")
-            arxiv_results = self.arxiv_searcher.search(english_query, max_results_per_source)
+            arxiv_results = self.arxiv_searcher.search(topic, max_results_per_source)
             all_results.extend(arxiv_results)
             print(f"📚 arXiv找到 {len(arxiv_results)} 篇论文")
         
         # CrossRef检索
         if "crossref" in sources:
-            print(f"🔍 CrossRef检索中文主题: {topic}")
-            print(f"🔍 CrossRef使用英文查询: {english_query}")
-            crossref_results = self.crossref_searcher.search(english_query, max_results_per_source)
+            crossref_results = self.crossref_searcher.search(topic, max_results_per_source)
             all_results.extend(crossref_results)
             print(f"📚 CrossRef找到 {len(crossref_results)} 篇论文")
         
-        # 使用LLM增强结果（使用原始中文主题进行相关性评估）
+        # 使用LLM增强结果
         if all_results and self.llm:
             print("🤖 使用AI分析论文相关性...")
-            all_results = self.enhancer.enhance_results(all_results, topic)  # 使用中文主题评估相关性
+            all_results = self.enhancer.enhance_results(all_results, topic)
         
-        # 缓存结果（使用英文查询作为缓存键）
+        # 缓存结果
         if all_results:
-            self.cache.cache_results(english_query, sources, all_results)
+            self.cache.cache_results(topic, sources, all_results)
         
         return all_results
     
@@ -567,16 +429,15 @@ class DynamicRAGModule:
                                  agent_role: str, 
                                  debate_topic: str, 
                                  max_sources: int = 3) -> str:
-        """为特定角色获取RAG上下文（优化版，支持中文主题）"""
+        """为特定角色获取RAG上下文"""
         
-        # 基于角色调整搜索查询（现在支持中文翻译）
+        # 基于角色调整搜索查询
         role_focused_query = self._create_role_focused_query(agent_role, debate_topic)
         
         # 检索相关文献
         results = self.search_academic_sources(role_focused_query, max_results_per_source=2)
         
         if not results:
-            print(f"⚠️ 未找到{agent_role}相关的学术资料")
             return "暂无相关学术资料。"
         
         # 选择最相关的几篇
@@ -595,44 +456,21 @@ class DynamicRAGModule:
 """
             context_parts.append(context_part.strip())
         
-        context = "\n\n".join(context_parts)
-        print(f"📚 为{agent_role}准备了{len(top_results)}篇参考文献")
-        return context
+        return "\n\n".join(context_parts)
     
     def _create_role_focused_query(self, agent_role: str, debate_topic: str) -> str:
-        """基于角色创建针对性查询（优化版，支持中英文混合）"""
-        
-        # 基础英文关键词映射（根据你原有的角色定义）
+        """基于角色创建针对性查询"""
         role_keywords = {
-            "environmentalist": "environment climate sustainability ecology conservation renewable",
-            "economist": "economic cost benefit market analysis finance policy",
-            "policy_maker": "policy governance regulation implementation law public administration",
-            "tech_expert": "technology innovation technical feasibility artificial intelligence",
-            "sociologist": "social impact society community effects inequality demographics",
-            "ethicist": "ethics moral responsibility values philosophy bioethics"
+            "environmentalist": "environment climate sustainability ecology",
+            "economist": "economic cost benefit market analysis",
+            "policy_maker": "policy governance regulation implementation",
+            "tech_expert": "technology innovation technical feasibility",
+            "sociologist": "social impact society community effects",
+            "ethicist": "ethics moral responsibility values"
         }
         
-        # 获取角色专业关键词
-        role_english_keywords = role_keywords.get(agent_role, "research analysis")
-        
-        # 将中文主题翻译为英文
-        english_topic = self.query_translator.translate_to_academic_query(debate_topic)
-        
-        # 组合查询：主题关键词 + 角色关键词
-        combined_query = f"{english_topic} {role_english_keywords}"
-        
-        # 去重并限制关键词数量
-        unique_keywords = []
-        seen = set()
-        for keyword in combined_query.split():
-            if keyword.lower() not in seen and len(keyword) > 2:
-                unique_keywords.append(keyword)
-                seen.add(keyword.lower())
-        
-        final_query = ' '.join(unique_keywords[:8])  # 限制在8个关键词以内
-        
-        print(f"🎯 {agent_role}专用查询: {final_query}")
-        return final_query
+        keywords = role_keywords.get(agent_role, "")
+        return f"{debate_topic} {keywords}".strip()
 
 # 全局RAG实例（将在graph.py中初始化）
 rag_module = None
@@ -649,7 +487,7 @@ def get_rag_module() -> Optional[DynamicRAGModule]:
 
 # 测试函数
 def test_rag_module():
-    """测试RAG模块功能（包括中文查询翻译）"""
+    """测试RAG模块功能"""
     print("🧪 开始测试RAG模块...")
     
     # 创建测试LLM（需要有效的API密钥）
@@ -660,77 +498,19 @@ def test_rag_module():
         # 初始化RAG模块
         rag = initialize_rag_module(test_llm)
         
-        # 测试中文查询翻译
-        print("\n🔤 测试查询翻译功能:")
-        chinese_topics = [
-            "人工智能对就业的影响",
-            "核能发电与气候变化",
-            "基因编辑技术的伦理问题"
-        ]
-        
-        for topic in chinese_topics:
-            english_query = rag.query_translator.translate_to_academic_query(topic)
-            print(f"  中文: {topic}")
-            print(f"  英文: {english_query}\n")
-        
         # 测试检索
-        test_topic = "人工智能对就业的影响"
-        print(f"🔍 测试检索中文主题: {test_topic}")
+        test_topic = "artificial intelligence employment impact"
         results = rag.search_academic_sources(test_topic, sources=["arxiv"])
         
         print(f"✅ 检索到 {len(results)} 篇相关论文")
         for i, result in enumerate(results[:2], 1):
             print(f"\n论文 {i}:")
-            print(f"  标题: {result.title}")
-            print(f"  相关性: {result.relevance_score}/10")
-            print(f"  关键发现: {result.key_findings[:100]}...")
-        
-        # 测试角色专用查询
-        print(f"\n🎭 测试角色专用查询:")
-        for role in ["tech_expert", "economist", "sociologist"]:
-            context = rag.get_rag_context_for_agent(role, test_topic, max_sources=1)
-            print(f"  {role}: {len(context)} 字符的上下文")
+            print(f"标题: {result.title}")
+            print(f"相关性: {result.relevance_score}/10")
+            print(f"关键发现: {result.key_findings[:100]}...")
             
     except Exception as e:
         print(f"❌ RAG模块测试失败: {e}")
 
-def test_query_translation():
-    """单独测试查询翻译功能"""
-    print("🔤 测试查询翻译功能...")
-    
-    try:
-        from langchain_deepseek import ChatDeepSeek
-        test_llm = ChatDeepSeek(model="deepseek-chat", temperature=0.3)
-        translator = QueryTranslator(test_llm)
-        
-        test_cases = [
-            "人工智能是否会威胁人类就业？",
-            "核能发电是解决气候变化的最佳方案吗？",
-            "基因编辑技术的伦理边界在哪里？",
-            "远程工作对社会经济的长期影响",
-            "artificial intelligence employment impact",  # 已经是英文
-            "AI在医疗诊断中的应用前景"
-        ]
-        
-        print("查询翻译测试结果:")
-        print("-" * 50)
-        for topic in test_cases:
-            english_query = translator.translate_to_academic_query(topic)
-            print(f"原文: {topic}")
-            print(f"英文: {english_query}")
-            print()
-            
-    except Exception as e:
-        print(f"❌ 查询翻译测试失败: {e}")
-
 if __name__ == "__main__":
-    # 检查环境变量
-    if not os.getenv("DEEPSEEK_API_KEY"):
-        print("❌ 警告: DEEPSEEK_API_KEY 环境变量未设置")
-        print("💡 可以先测试查询翻译的基础逻辑...")
-        # test_query_translation()
-    else:
-        print("✅ 环境变量配置正确")
-        test_rag_module()
-        print("\n" + "="*50)
-        test_query_translation()
+    test_rag_module()
