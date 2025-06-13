@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "graphs": {
+    "agent": "./graph.py:graph"
+  },
+  "env": ".env",
+  "python_version": "3.12",
+  "dependencies": [
+    "./"
+  ],
+  "metadata": {
+    "name": "AI辩论系统",
+    "description": "基于DeepSeek模型的AI辩论应用",
+    "version": "1.0.0",
+    "author": "AI Debates Team",
+    "license": "MIT"
+  },
+  "runtime": {
+    "timeout": 300,
+    "memory_limit": "512MB",
+    "cpu_limit": "1"
+  },
+  "environment": {
+    "required_vars": [
+      "DEEPSEEK_API_KEY"
+    ],
+    "optional_vars": [
+      "DEEPSEEK_API_BASE",
+      "DEFAULT_MODEL",
+      "DEFAULT_TEMPERATURE",
+      "DEFAULT_MAX_TOKENS"
+    ]
+  },
+  "deployment": {
+    "platform": "local",
+    "port": 8501,
+    "host": "0.0.0.0"
+  }
+}
