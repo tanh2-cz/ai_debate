@@ -1,39 +1,205 @@
 {
-  "version": "1.0",
+  "version": "2.0",
+  "name": "multi-agent-debate-platform",
+  "description": "多角色AI辩论平台 - 支持3-6个专业角色同时参与智能辩论",
+  
   "graphs": {
-    "agent": "./graph.py:graph"
+    "multi_agent_debate": "./graph.py:graph",
+    "default_debate": "./graph.py:create_default_graph"
   },
-  "env": ".env",
-  "python_version": "3.12",
-  "dependencies": [
-    "./"
-  ],
-  "metadata": {
-    "name": "AI辩论系统",
-    "description": "基于DeepSeek模型的AI辩论应用",
-    "version": "1.0.0",
-    "author": "AI Debates Team",
-    "license": "MIT"
-  },
-  "runtime": {
-    "timeout": 300,
-    "memory_limit": "512MB",
-    "cpu_limit": "1"
-  },
+  
   "environment": {
-    "required_vars": [
+    "file": ".env",
+    "required_variables": [
       "DEEPSEEK_API_KEY"
     ],
-    "optional_vars": [
+    "optional_variables": [
       "DEEPSEEK_API_BASE",
       "DEFAULT_MODEL",
       "DEFAULT_TEMPERATURE",
-      "DEFAULT_MAX_TOKENS"
+      "DEFAULT_MAX_TOKENS",
+      "DEFAULT_AGENTS",
+      "DEFAULT_MAX_ROUNDS"
     ]
   },
+  
+  "runtime": {
+    "python_version": "3.12",
+    "timeout": 600,
+    "memory_limit": "1GB",
+    "cpu_limit": "2",
+    "max_workers": 4
+  },
+  
+  "dependencies": {
+    "install_command": "pip install -r requirements.txt",
+    "requirements_file": "./requirements.txt",
+    "core_packages": [
+      "streamlit>=1.28.0",
+      "langchain>=0.1.0", 
+      "langchain-deepseek>=0.1.0",
+      "langgraph>=0.0.40",
+      "python-dotenv>=1.0.0"
+    ]
+  },
+  
+  "agents": {
+    "available_roles": [
+      {
+        "key": "environmentalist",
+        "name": "环保主义者",
+        "icon": "🌱",
+        "color": "#4CAF50",
+        "category": "环境科学"
+      },
+      {
+        "key": "economist", 
+        "name": "经济学家",
+        "icon": "📊",
+        "color": "#FF9800",
+        "category": "经济学"
+      },
+      {
+        "key": "policy_maker",
+        "name": "政策制定者", 
+        "icon": "🏛️",
+        "color": "#3F51B5",
+        "category": "公共政策"
+      },
+      {
+        "key": "tech_expert",
+        "name": "技术专家",
+        "icon": "💻",
+        "color": "#9C27B0", 
+        "category": "技术科学"
+      },
+      {
+        "key": "sociologist",
+        "name": "社会学家",
+        "icon": "👥",
+        "color": "#E91E63",
+        "category": "社会科学"
+      },
+      {
+        "key": "ethicist",
+        "name": "伦理学家",
+        "icon": "⚖️",
+        "color": "#607D8B",
+        "category": "伦理哲学"
+      }
+    ],
+    "min_agents": 3,
+    "max_agents": 6,
+    "default_combination": ["environmentalist", "economist", "policy_maker"]
+  },
+  
+  "debate_config": {
+    "min_rounds": 2,
+    "max_rounds": 8,
+    "default_rounds": 3,
+    "topics": {
+      "categories": [
+        "科技与社会",
+        "环境与发展", 
+        "经济与政策",
+        "伦理与哲学",
+        "教育与文化"
+      ],
+      "preset_topics": [
+        "人工智能是否会威胁人类就业？",
+        "核能发电是解决气候变化的最佳方案吗？",
+        "全民基本收入制度是否可行？",
+        "基因编辑技术的伦理边界在哪里？",
+        "远程工作对社会经济的长期影响",
+        "数字货币能否取代传统货币？",
+        "太空探索的优先级vs地球环境保护",
+        "人工肉类能否完全替代传统畜牧业？",
+        "社交媒体监管的必要性与界限",
+        "自动驾驶汽车的安全性与责任问题"
+      ]
+    }
+  },
+  
+  "model_config": {
+    "provider": "deepseek",
+    "model_name": "deepseek-chat",
+    "default_parameters": {
+      "temperature": 0.8,
+      "max_tokens": 1800,
+      "timeout": 60,
+      "max_retries": 3
+    },
+    "optimization": {
+      "enable_caching": false,
+      "batch_processing": false,
+      "parallel_requests": false
+    }
+  },
+  
+  "ui_config": {
+    "framework": "streamlit",
+    "theme": "auto",
+    "layout": "wide",
+    "sidebar_state": "expanded",
+    "features": {
+      "real_time_progress": true,
+      "role_selection": true,
+      "topic_suggestions": true,
+      "debate_statistics": false,
+      "export_results": false
+    }
+  },
+  
   "deployment": {
     "platform": "local",
+    "host": "0.0.0.0",
     "port": 8501,
-    "host": "0.0.0.0"
+    "auto_reload": true,
+    "startup_commands": [
+      "streamlit run debates.py"
+    ],
+    "health_check": {
+      "endpoint": "/health",
+      "timeout": 30
+    }
+  },
+  
+  "monitoring": {
+    "enable_logging": true,
+    "log_level": "INFO", 
+    "log_format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "metrics": {
+      "track_api_calls": true,
+      "track_response_time": true,
+      "track_user_interactions": false
+    }
+  },
+  
+  "security": {
+    "validate_inputs": true,
+    "sanitize_outputs": true,
+    "rate_limiting": false,
+    "api_key_encryption": false
+  },
+  
+  "experimental": {
+    "features": [
+      "dynamic_role_creation",
+      "debate_summarization", 
+      "topic_recommendation",
+      "multi_language_support"
+    ],
+    "enabled": false
+  },
+  
+  "metadata": {
+    "version": "2.0.0",
+    "created": "2024-12-19",
+    "updated": "2024-12-19",
+    "author": "Multi-Agent Debate Platform Team",
+    "license": "MIT",
+    "repository": "https://github.com/your-org/multi-agent-debate-platform",
+    "documentation": "https://your-org.github.io/multi-agent-debate-platform",
+    "support": "https://github.com/your-org/multi-agent-debate-platform/issues"
   }
 }
