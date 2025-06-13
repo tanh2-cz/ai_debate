@@ -1,6 +1,7 @@
 """
 动态RAG模块 - 实时检索权威数据库
 支持arXiv、CrossRef等学术数据源的真实检索
+修复：支持用户自定义的每专家最大参考文献数设置
 优化：支持基于专家角色的缓存机制
 """
 
@@ -196,7 +197,7 @@ class ArxivSearcher:
                 'sortOrder': 'descending'
             }
             
-            print(f"🔍 正在arXiv检索: {query}")
+            print(f"🔍 正在arXiv检索: {query} (最多{max_results}篇)")
             response = self.session.get(self.base_url, params=params, timeout=30)
             response.raise_for_status()
             
@@ -275,7 +276,7 @@ class CrossRefSearcher:
                 'select': 'title,author,abstract,URL,published-print,container-title'
             }
             
-            print(f"🔍 正在CrossRef检索: {query}")
+            print(f"🔍 正在CrossRef检索: {query} (最多{max_results}篇)")
             response = self.session.get(self.base_url, params=params, timeout=30)
             response.raise_for_status()
             
@@ -439,7 +440,7 @@ class RAGEnhancer:
             }
 
 class DynamicRAGModule:
-    """动态RAG主模块（增强版，支持专家角色缓存）"""
+    """动态RAG主模块（修复版，支持用户自定义配置）"""
     
     def __init__(self, llm: ChatDeepSeek):
         self.llm = llm
@@ -463,10 +464,21 @@ class DynamicRAGModule:
                               sources: List[str] = ["arxiv", "crossref"],
                               max_results_per_source: int = None,
                               agent_role: str = "") -> List[SearchResult]:
-        """搜索学术数据源（增强版，支持角色特化）"""
+        """
+        搜索学术数据源（修复版，支持用户自定义结果数量）
+        
+        Args:
+            topic: 搜索主题
+            sources: 数据源列表
+            max_results_per_source: 每个数据源的最大结果数（用户可配置）
+            agent_role: 专家角色（用于定制化分析）
+        """
         
         if max_results_per_source is None:
             max_results_per_source = RAG_CONFIG["max_results_per_source"]
+        
+        # 🔧 验证用户配置
+        print(f"🔧 RAG检索配置：每源最多{max_results_per_source}篇，角色定制：{agent_role}")
         
         # 检查缓存
         cached_results = self.cache.get_cached_results(topic, sources)
@@ -483,13 +495,13 @@ class DynamicRAGModule:
         if "arxiv" in sources:
             arxiv_results = self.arxiv_searcher.search(topic, max_results_per_source)
             all_results.extend(arxiv_results)
-            print(f"📚 arXiv找到 {len(arxiv_results)} 篇论文")
+            print(f"📚 arXiv找到 {len(arxiv_results)} 篇论文（设置上限：{max_results_per_source}篇）")
         
         # CrossRef检索
         if "crossref" in sources:
             crossref_results = self.crossref_searcher.search(topic, max_results_per_source)
             all_results.extend(crossref_results)
-            print(f"📚 CrossRef找到 {len(crossref_results)} 篇论文")
+            print(f"📚 CrossRef找到 {len(crossref_results)} 篇论文（设置上限：{max_results_per_source}篇）")
         
         # 使用LLM增强结果（考虑专家角色）
         if all_results and self.llm:
@@ -506,39 +518,53 @@ class DynamicRAGModule:
                                  agent_role: str, 
                                  debate_topic: str, 
                                  max_sources: int = 3,
+                                 max_results_per_source: int = 2,
                                  force_refresh: bool = False) -> str:
         """
-        为特定角色获取RAG上下文（优化版，支持缓存）
+        为特定角色获取RAG上下文（修复版，完全支持用户自定义配置）
         
         Args:
             agent_role: 专家角色
             debate_topic: 辩论主题
-            max_sources: 最大资源数
+            max_sources: 最大参考文献数（来自用户设置）- 🔧 关键修复点
+            max_results_per_source: 每个数据源的最大检索数
             force_refresh: 是否强制刷新（忽略缓存）
         """
+        
+        # 🔧 关键验证：确认接收到用户设置
+        print(f"🔧 RAG上下文配置确认：专家{agent_role}，最大文献数{max_sources}篇（用户设置），每源{max_results_per_source}篇")
         
         # 如果不强制刷新，先检查专家缓存
         if not force_refresh:
             cached_context = self.cache.get_agent_cached_context(agent_role, debate_topic)
             if cached_context:
-                print(f"📚 使用专家 {agent_role} 的缓存学术资料")
-                return cached_context
+                # 🔧 验证缓存中的文献数量是否符合用户设置
+                cached_ref_count = cached_context.count('参考资料')
+                print(f"📚 使用专家 {agent_role} 的缓存学术资料：{cached_ref_count}篇")
+                
+                # 如果缓存的数量不符合用户当前设置，重新检索
+                if cached_ref_count != max_sources:
+                    print(f"🔄 缓存文献数({cached_ref_count})与用户设置({max_sources})不符，重新检索...")
+                else:
+                    return cached_context
         
         # 基于角色调整搜索查询
         role_focused_query = self._create_role_focused_query(agent_role, debate_topic)
         
-        # 检索相关文献（传入角色信息以便定制化分析）
+        # 🔧 关键修复：使用用户设置的数量进行检索
         results = self.search_academic_sources(
             role_focused_query, 
-            max_results_per_source=2, 
+            max_results_per_source=max_results_per_source,  # 每源检索数
             agent_role=agent_role
         )
         
         if not results:
             context = "暂无相关学术资料。"
         else:
-            # 选择最相关的几篇
-            top_results = results[:max_sources]
+            # 🔧 关键修复：选择用户设置数量的文献，而不是硬编码
+            top_results = results[:max_sources]  # 使用用户设置！
+            
+            print(f"📊 检索结果处理：为专家 {agent_role} 实际检索到 {len(results)} 篇，按用户设置选择前 {len(top_results)} 篇")
             
             # 构建上下文
             context_parts = []
@@ -554,6 +580,10 @@ class DynamicRAGModule:
                 context_parts.append(context_part.strip())
             
             context = "\n\n".join(context_parts)
+            
+            # 🔧 验证最终结果
+            final_ref_count = context.count('参考资料')
+            print(f"✅ 上下文构建完成：{final_ref_count}篇参考文献（用户设置：{max_sources}篇）")
         
         # 缓存结果
         if context and context != "暂无相关学术资料。":
@@ -573,17 +603,21 @@ class DynamicRAGModule:
         }
         
         keywords = role_keywords.get(agent_role, "")
-        return f"{debate_topic} {keywords}".strip()
+        focused_query = f"{debate_topic} {keywords}".strip()
+        print(f"🎯 为{agent_role}定制查询：{focused_query}")
+        return focused_query
     
-    def preload_agent_contexts(self, agent_roles: List[str], debate_topic: str):
+    def preload_agent_contexts(self, agent_roles: List[str], debate_topic: str, max_refs_per_agent: int = 3):
         """
-        预加载所有专家的上下文（用于第一轮优化）
+        预加载所有专家的上下文（修复版，支持用户配置）
         
         Args:
             agent_roles: 专家角色列表
             debate_topic: 辩论主题
+            max_refs_per_agent: 每个专家的最大参考文献数（用户设置）
         """
         print(f"🚀 开始为 {len(agent_roles)} 位专家预加载学术资料...")
+        print(f"📊 用户配置：每专家最多 {max_refs_per_agent} 篇参考文献")
         
         for agent_role in agent_roles:
             try:
@@ -591,12 +625,14 @@ class DynamicRAGModule:
                 context = self.get_rag_context_for_agent(
                     agent_role=agent_role,
                     debate_topic=debate_topic,
-                    max_sources=3,
+                    max_sources=max_refs_per_agent,  # 🔧 使用用户设置
+                    max_results_per_source=2,
                     force_refresh=True  # 强制刷新确保最新资料
                 )
                 
                 if context and context != "暂无相关学术资料。":
-                    print(f"✅ 专家 {agent_role} 的学术资料已准备就绪")
+                    actual_count = context.count('参考资料')
+                    print(f"✅ 专家 {agent_role} 的学术资料已准备就绪：{actual_count}篇（设置：{max_refs_per_agent}篇）")
                 else:
                     print(f"⚠️ 专家 {agent_role} 未找到相关学术资料")
                 
@@ -619,6 +655,48 @@ class DynamicRAGModule:
             print("✅ 已清理所有缓存")
         except Exception as e:
             print(f"❌ 清理缓存失败: {e}")
+    
+    def test_user_config_support(self, agent_role: str = "tech_expert", 
+                                debate_topic: str = "artificial intelligence education",
+                                test_configs: List[int] = [1, 3, 5]):
+        """
+        测试用户配置支持（验证修复效果）
+        
+        Args:
+            agent_role: 测试专家角色
+            debate_topic: 测试辩论主题  
+            test_configs: 测试的参考文献数量列表
+        """
+        print("🧪 开始测试用户RAG配置支持...")
+        
+        for max_refs in test_configs:
+            print(f"\n📋 测试配置：每专家{max_refs}篇参考文献")
+            
+            # 清理缓存确保重新检索
+            self.cache.clear_agent_cache(agent_role)
+            
+            try:
+                context = self.get_rag_context_for_agent(
+                    agent_role=agent_role,
+                    debate_topic=debate_topic,
+                    max_sources=max_refs,  # 测试用户设置
+                    force_refresh=True
+                )
+                
+                if context and context != "暂无相关学术资料。":
+                    actual_count = context.count('参考资料')
+                    status = "✅" if actual_count == max_refs else "❌"
+                    print(f"{status} 结果：实际{actual_count}篇，期望{max_refs}篇")
+                    
+                    if actual_count != max_refs:
+                        print(f"⚠️ 配置不生效！请检查代码修复")
+                else:
+                    print(f"⚠️ 未找到学术资料")
+                    
+            except Exception as e:
+                print(f"❌ 测试失败: {e}")
+        
+        print("\n🎉 用户RAG配置测试完成！")
 
 # 全局RAG实例（将在graph.py中初始化）
 rag_module = None
@@ -635,8 +713,8 @@ def get_rag_module() -> Optional[DynamicRAGModule]:
 
 # 测试函数
 def test_rag_module():
-    """测试RAG模块功能"""
-    print("🧪 开始测试优化版RAG模块...")
+    """测试RAG模块功能（包括用户配置支持）"""
+    print("🧪 开始测试修复版RAG模块...")
     
     # 创建测试LLM（需要有效的API密钥）
     try:
@@ -652,14 +730,26 @@ def test_rag_module():
         
         print("🔍 测试专家角色检索...")
         for role in test_roles:
-            context = rag.get_rag_context_for_agent(role, test_topic)
-            print(f"\n✅ 专家 {role} 的上下文长度: {len(context)} 字符")
-            print(f"上下文预览: {context[:150]}...")
+            # 🔧 测试不同的用户配置
+            for max_refs in [1, 3, 5]:
+                print(f"\n📊 测试：{role} 获取 {max_refs} 篇文献")
+                context = rag.get_rag_context_for_agent(
+                    agent_role=role, 
+                    debate_topic=test_topic,
+                    max_sources=max_refs,  # 测试用户设置
+                    force_refresh=True
+                )
+                
+                if context and context != "暂无相关学术资料。":
+                    actual_count = context.count('参考资料')
+                    status = "✅" if actual_count == max_refs else "❌"
+                    print(f"{status} 结果：期望{max_refs}篇，实际{actual_count}篇")
+                else:
+                    print("⚠️ 未找到学术资料")
         
-        # 测试缓存功能
-        print("\n🔄 测试缓存功能...")
-        context2 = rag.get_rag_context_for_agent("tech_expert", test_topic)
-        print(f"✅ 缓存测试完成，上下文长度: {len(context2)} 字符")
+        # 专门的用户配置测试
+        print("\n🔧 专门测试用户配置支持...")
+        rag.test_user_config_support()
             
     except Exception as e:
         print(f"❌ RAG模块测试失败: {e}")
