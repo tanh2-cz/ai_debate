@@ -301,7 +301,7 @@ with st.sidebar:
             help="每个专家角色获取的最大参考文献数量"
         )
         
-        st.info("💡 RAG功能将为每个专家实时检索相关学术资料，提供更权威的论证支撑")
+        st.info("💡 RAG功能将自动将中文辩论主题翻译为英文进行学术检索，为每个专家实时检索相关学术资料，提供更权威的论证支撑")
     else:
         rag_sources = []
         max_refs_per_agent = 0
@@ -503,7 +503,8 @@ st.markdown("""
 <div style='text-align: center; opacity: 0.7;'>
     🎭 多角色AI辩论平台 (RAG增强版) | 基于真实学术研究的智能辩论体验<br>
     🔗 Powered by <a href='https://platform.deepseek.com/'>DeepSeek</a> & <a href='https://streamlit.io/'>Streamlit</a><br>
-    📚 学术检索: arXiv + CrossRef | 🤖 智能分析: LangChain + RAG
+    📚 学术检索: arXiv + CrossRef | 🤖 智能分析: LangChain + RAG<br>
+    🔤 支持中文主题自动翻译为英文学术查询
 </div>
 """, unsafe_allow_html=True)
 

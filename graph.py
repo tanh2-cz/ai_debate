@@ -448,10 +448,19 @@ def warmup_rag_system(test_topic: str = "artificial intelligence"):
     if rag_module:
         print("🔥 预热RAG系统...")
         try:
+            # 测试中英文查询翻译
+            if rag_module.query_translator:
+                chinese_test = "人工智能研究"
+                english_query = rag_module.query_translator.translate_to_academic_query(chinese_test)
+                print(f"🔤 查询翻译测试: '{chinese_test}' -> '{english_query}'")
+            
+            # 预加载检索结果
             rag_module.search_academic_sources(test_topic, max_results_per_source=2)
-            print("✅ RAG系统预热完成")
+            print("✅ RAG系统预热完成，支持中英文查询")
         except Exception as e:
             print(f"⚠️ RAG系统预热失败: {e}")
+    else:
+        print("⚠️ RAG模块未初始化")
 
 
 # 主程序入口
@@ -462,8 +471,8 @@ if __name__ == "__main__":
     else:
         print("✅ 环境变量配置正确")
         
-        # 预热RAG系统
-        warmup_rag_system()
+        # 预热RAG系统（测试中文查询翻译）
+        warmup_rag_system("人工智能")  # 使用中文测试
         
         # 运行测试
         test_enhanced_multi_agent_debate(

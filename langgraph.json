@@ -212,6 +212,42 @@
       "extract_key_findings": true,
       "assess_relevance": true,
       "generate_citations": true
+    },
+    
+    "query_translation": {
+      "enabled": true,
+      "source_language": "chinese",
+      "target_language": "english",
+      "fallback_translation": true,
+      "keyword_mapping": {
+        "人工智能": "artificial intelligence",
+        "机器学习": "machine learning",
+        "深度学习": "deep learning",
+        "就业": "employment",
+        "工作": "job work",
+        "核能": "nuclear power",
+        "气候变化": "climate change",
+        "环境保护": "environmental protection",
+        "经济": "economics economy",
+        "政策": "policy",
+        "技术": "technology",
+        "社会": "society social",
+        "伦理": "ethics",
+        "道德": "moral",
+        "可持续发展": "sustainable development",
+        "能源": "energy",
+        "教育": "education",
+        "医疗": "healthcare medical",
+        "自动化": "automation",
+        "机器人": "robotics",
+        "生物技术": "biotechnology",
+        "基因编辑": "gene editing CRISPR",
+        "区块链": "blockchain",
+        "量子计算": "quantum computing",
+        "自动驾驶": "autonomous driving",
+        "虚拟现实": "virtual reality",
+        "增强现实": "augmented reality"
+      }
     }
   },
   
