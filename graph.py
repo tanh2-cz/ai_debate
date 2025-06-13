@@ -1,6 +1,7 @@
 """
 多角色AI辩论系统核心逻辑 - 增强版本集成动态RAG
 支持3-6个不同角色的智能辩论，基于真实学术资料
+优化：第一轮为每个专家检索论文，后续轮次使用缓存
 """
 
 from typing import TypedDict, Literal, List, Dict, Any
@@ -56,6 +57,9 @@ class MultiAgentDebateState(MessagesState):
     rag_enabled: bool = True            # RAG功能开关
     rag_sources: List[str] = ["arxiv", "crossref"]  # RAG数据源
     collected_references: List[Dict] = [] # 收集的参考文献
+    # 新增：每个专家的论文缓存
+    agent_paper_cache: Dict[str, str] = {}  # 格式: {agent_key: rag_context}
+    first_round_rag_completed: List[str] = []  # 已完成第一轮RAG检索的专家列表
 
 
 # 定义所有可用的角色（保持原有定义）
@@ -155,7 +159,6 @@ ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE = """
 {other_participants}
 
 【学术参考资料】
-基于辩论主题，我为你检索了以下最新的学术研究作为参考：
 {rag_context}
 
 【对话历史】
@@ -221,24 +224,50 @@ def get_other_participants(active_agents: List[str], current_agent: str) -> str:
 
 
 def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAgentDebateState) -> str:
-    """为Agent获取RAG上下文"""
+    """
+    为Agent获取RAG上下文（优化版）
+    第一轮：检索并缓存论文
+    后续轮次：使用缓存的论文
+    """
     
     # 检查RAG是否启用
     if not state.get("rag_enabled", True) or not rag_module:
         return "当前未启用学术资料检索功能。"
     
+    # 检查当前轮次
+    current_round = state.get("current_round", 1)
+    agent_paper_cache = state.get("agent_paper_cache", {})
+    first_round_rag_completed = state.get("first_round_rag_completed", [])
+    
     try:
-        # 基于角色和主题获取上下文
-        context = rag_module.get_rag_context_for_agent(
-            agent_role=agent_key,
-            debate_topic=debate_topic,
-            max_sources=2  # 每个角色最多2篇参考文献
-        )
+        # 如果是第一轮且该专家还未检索过，进行检索并缓存
+        if current_round == 1 and agent_key not in first_round_rag_completed:
+            print(f"🔍 第一轮：为{AVAILABLE_ROLES[agent_key]['name']}检索专属学术资料...")
+            
+            # 基于角色和主题获取上下文
+            context = rag_module.get_rag_context_for_agent(
+                agent_role=agent_key,
+                debate_topic=debate_topic,
+                max_sources=3  # 第一轮获取更多资料
+            )
+            
+            # 将结果缓存到状态中
+            if context and context.strip() != "暂无相关学术资料。":
+                agent_paper_cache[agent_key] = context
+                first_round_rag_completed.append(agent_key)
+                print(f"✅ 已为{AVAILABLE_ROLES[agent_key]['name']}缓存专属学术资料")
+                return context
+            else:
+                return "暂未找到直接相关的最新学术研究，请基于你的专业知识发表观点。"
         
-        if not context or context.strip() == "暂无相关学术资料。":
+        # 如果不是第一轮或该专家已检索过，使用缓存
+        elif agent_key in agent_paper_cache:
+            print(f"📚 使用缓存：为{AVAILABLE_ROLES[agent_key]['name']}提供专属学术资料")
+            return agent_paper_cache[agent_key]
+        
+        # 兜底情况
+        else:
             return "暂未找到直接相关的最新学术研究，请基于你的专业知识发表观点。"
-        
-        return context
         
     except Exception as e:
         print(f"❌ 获取{agent_key}的RAG上下文失败: {e}")
@@ -247,7 +276,7 @@ def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAge
 
 def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Dict[str, Any]:
     """
-    生成指定Agent的回复（增强版，集成RAG）
+    生成指定Agent的回复（增强版，集成RAG，优化缓存机制）
     
     Args:
         state: 当前辩论状态
@@ -279,10 +308,8 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
         current_agent_index = state.get("current_agent_index", 0)
         agent_position = (current_agent_index % len(state["active_agents"])) + 1
         
-        # 获取RAG上下文（这是新增的关键功能）
+        # 获取RAG上下文（优化后的版本）
         rag_context = get_rag_context_for_agent(agent_key, state["main_topic"], state)
-        
-        print(f"🔍 为{agent_info['name']}获取学术资料...")
         
         # 调用模型生成回复
         response = pipe.invoke({
@@ -296,7 +323,7 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
             "current_round": state.get("current_round", 1),
             "agent_position": agent_position,
             "other_participants": other_participants,
-            "rag_context": rag_context,  # 新增RAG上下文
+            "rag_context": rag_context,
             "history": history,
         })
         
@@ -312,12 +339,26 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
         new_agent_index = state.get("current_agent_index", 0) + 1
         new_round = ((new_total_messages - 1) // len(state["active_agents"])) + 1
         
-        return {
+        # 更新状态，保持缓存信息
+        update_data = {
             "messages": [AIMessage(content=response)],
             "total_messages": new_total_messages,
             "current_agent_index": new_agent_index,
             "current_round": new_round,
         }
+        
+        # 如果在第一轮完成了RAG检索，更新缓存状态
+        current_round = state.get("current_round", 1)
+        if current_round == 1:
+            agent_paper_cache = state.get("agent_paper_cache", {})
+            first_round_rag_completed = state.get("first_round_rag_completed", [])
+            
+            # 如果该专家的缓存已更新，同步到状态
+            if agent_key in first_round_rag_completed:
+                update_data["agent_paper_cache"] = agent_paper_cache
+                update_data["first_round_rag_completed"] = first_round_rag_completed
+        
+        return update_data
         
     except Exception as e:
         error_msg = f"{AVAILABLE_ROLES[agent_key]['name']}: 抱歉，我现在无法发言。技术问题：{str(e)}"
@@ -392,8 +433,8 @@ def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True)
     builder.add_edge(START, first_agent)
     
     # 输出创建信息
-    rag_status = "✅ 已启用" if rag_enabled and rag_module else "❌ 未启用"
-    print(f"✅ 创建增强版多角色辩论图成功")
+    rag_status = "✅ 已启用（第一轮检索+缓存）" if rag_enabled and rag_module else "❌ 未启用"
+    print(f"✅ 创建优化版多角色辩论图成功")
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in active_agents]}")
     print(f"📚 RAG学术检索: {rag_status}")
     
@@ -410,10 +451,10 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
     if agents is None:
         agents = ["tech_expert", "sociologist", "ethicist"]
     
-    print(f"🎯 开始测试增强版多角色辩论: {topic}")
+    print(f"🎯 开始测试优化版多角色辩论: {topic}")
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in agents]}")
     print(f"📊 辩论轮数: {rounds}")
-    print(f"📚 RAG检索: {'启用' if enable_rag else '禁用'}")
+    print(f"📚 RAG检索: {'启用（第一轮检索+缓存）' if enable_rag else '禁用'}")
     print("=" * 70)
     
     try:
@@ -429,14 +470,16 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
             "total_messages": 0,
             "rag_enabled": enable_rag,
             "rag_sources": ["arxiv", "crossref"],
-            "collected_references": []
+            "collected_references": [],
+            "agent_paper_cache": {},  # 新增
+            "first_round_rag_completed": []  # 新增
         }
         
         for i, output in enumerate(test_graph.stream(inputs, stream_mode="updates"), 1):
             print(f"消息 {i}: {output}")
             
         print("=" * 70)
-        print("✅ 增强版多角色辩论测试完成!")
+        print("✅ 优化版多角色辩论测试完成!")
         
     except Exception as e:
         print(f"❌ 测试过程中出现错误: {e}")

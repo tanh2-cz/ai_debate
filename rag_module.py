@@ -1,6 +1,7 @@
 """
 动态RAG模块 - 实时检索权威数据库
 支持arXiv、CrossRef等学术数据源的真实检索
+优化：支持基于专家角色的缓存机制
 """
 
 import os
@@ -30,7 +31,9 @@ RAG_CONFIG = {
     "chunk_overlap": 200,
     "similarity_threshold": 0.7,
     "cache_duration_hours": 24,
-    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2"
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    # 新增：专家缓存过期时间（小时）
+    "agent_cache_duration_hours": 6
 }
 
 @dataclass
@@ -46,15 +49,22 @@ class SearchResult:
     key_findings: str = ""
 
 class RAGCache:
-    """RAG结果缓存管理"""
+    """RAG结果缓存管理（增强版，支持专家角色缓存）"""
     
     def __init__(self, cache_dir: str = "./rag_cache"):
         self.cache_dir = cache_dir
+        self.agent_cache_dir = os.path.join(cache_dir, "agent_cache")
         os.makedirs(cache_dir, exist_ok=True)
+        os.makedirs(self.agent_cache_dir, exist_ok=True)
     
     def _get_cache_key(self, query: str, sources: List[str]) -> str:
         """生成缓存键"""
         key_string = f"{query}_{'-'.join(sorted(sources))}"
+        return hashlib.md5(key_string.encode()).hexdigest()
+    
+    def _get_agent_cache_key(self, agent_role: str, debate_topic: str) -> str:
+        """生成专家角色特定的缓存键"""
+        key_string = f"agent_{agent_role}_{debate_topic}"
         return hashlib.md5(key_string.encode()).hexdigest()
     
     def get_cached_results(self, query: str, sources: List[str]) -> Optional[List[SearchResult]]:
@@ -104,6 +114,68 @@ class RAGCache:
                 
         except Exception as e:
             print(f"❌ 缓存写入错误: {e}")
+    
+    def get_agent_cached_context(self, agent_role: str, debate_topic: str) -> Optional[str]:
+        """获取专家角色特定的缓存上下文"""
+        cache_key = self._get_agent_cache_key(agent_role, debate_topic)
+        cache_file = os.path.join(self.agent_cache_dir, f"{cache_key}.json")
+        
+        if not os.path.exists(cache_file):
+            return None
+        
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+            
+            # 检查是否过期
+            cache_time = datetime.fromisoformat(cache_data['timestamp'])
+            if datetime.now() - cache_time > timedelta(hours=RAG_CONFIG['agent_cache_duration_hours']):
+                os.remove(cache_file)
+                return None
+            
+            return cache_data['context']
+            
+        except Exception as e:
+            print(f"❌ 专家缓存读取错误: {e}")
+            return None
+    
+    def cache_agent_context(self, agent_role: str, debate_topic: str, context: str):
+        """缓存专家角色特定的上下文"""
+        cache_key = self._get_agent_cache_key(agent_role, debate_topic)
+        cache_file = os.path.join(self.agent_cache_dir, f"{cache_key}.json")
+        
+        try:
+            cache_data = {
+                'timestamp': datetime.now().isoformat(),
+                'agent_role': agent_role,
+                'debate_topic': debate_topic,
+                'context': context
+            }
+            
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                
+            print(f"✅ 已缓存专家 {agent_role} 的学术资料")
+                
+        except Exception as e:
+            print(f"❌ 专家缓存写入错误: {e}")
+    
+    def clear_agent_cache(self, agent_role: str = None):
+        """清理专家缓存（可选择特定角色）"""
+        try:
+            if agent_role:
+                # 清理特定角色的缓存
+                for filename in os.listdir(self.agent_cache_dir):
+                    if filename.startswith(f"agent_{agent_role}_"):
+                        os.remove(os.path.join(self.agent_cache_dir, filename))
+                print(f"✅ 已清理专家 {agent_role} 的缓存")
+            else:
+                # 清理所有专家缓存
+                for filename in os.listdir(self.agent_cache_dir):
+                    os.remove(os.path.join(self.agent_cache_dir, filename))
+                print("✅ 已清理所有专家缓存")
+        except Exception as e:
+            print(f"❌ 清理缓存失败: {e}")
 
 class ArxivSearcher:
     """arXiv学术论文检索器"""
@@ -273,14 +345,15 @@ class RAGEnhancer:
     def __init__(self, llm: ChatDeepSeek):
         self.llm = llm
         self.analysis_prompt = ChatPromptTemplate.from_messages([
-            ("system", """你是一个学术研究分析专家。基于给定的学术论文信息，提取和总结关键发现，为辩论提供支撑。
+            ("system", """你是一个学术研究分析专家。基于给定的学术论文信息，提取和总结关键发现，为特定角色的辩论提供支撑。
 
 你的任务：
 1. 分析论文的核心观点和发现
-2. 提取与辩论主题相关的关键证据
+2. 提取与辩论主题和指定角色相关的关键证据
 3. 简洁地总结主要论点（2-3句话）
 4. 评估研究的可信度和相关性
 
+专家角色：{agent_role}
 论文信息：
 标题：{title}
 作者：{authors}
@@ -290,21 +363,21 @@ class RAGEnhancer:
 
 辩论主题：{debate_topic}
 
-请提供：
+请特别关注与{agent_role}专业领域相关的内容，提供：
 1. 关键发现（核心观点和证据）
 2. 与辩论主题的相关性评分（1-10分）
-3. 建议在辩论中如何引用这项研究"""),
+3. 建议该角色在辩论中如何引用这项研究"""),
             ("user", "请分析这篇论文并提供关键洞察")
         ])
     
-    def enhance_results(self, results: List[SearchResult], debate_topic: str) -> List[SearchResult]:
-        """增强检索结果，提取关键洞察"""
+    def enhance_results(self, results: List[SearchResult], debate_topic: str, agent_role: str = "") -> List[SearchResult]:
+        """增强检索结果，提取关键洞察（针对特定角色优化）"""
         enhanced_results = []
         
         for result in results:
             try:
-                # 使用LLM分析论文
-                analysis = self._analyze_paper(result, debate_topic)
+                # 使用LLM分析论文（考虑专家角色）
+                analysis = self._analyze_paper(result, debate_topic, agent_role)
                 result.key_findings = analysis.get('key_findings', '')
                 result.relevance_score = analysis.get('relevance_score', 5.0)
                 enhanced_results.append(result)
@@ -321,15 +394,16 @@ class RAGEnhancer:
         enhanced_results.sort(key=lambda x: x.relevance_score, reverse=True)
         return enhanced_results
     
-    def _analyze_paper(self, result: SearchResult, debate_topic: str) -> dict:
-        """分析单篇论文"""
+    def _analyze_paper(self, result: SearchResult, debate_topic: str, agent_role: str = "") -> dict:
+        """分析单篇论文（针对特定角色）"""
         try:
             pipe = self.analysis_prompt | self.llm | StrOutputParser()
             
             response = pipe.invoke({
+                'agent_role': agent_role,
                 'title': result.title,
-                'authors': ', '.join(result.authors[:3]),  # 限制作者数量
-                'abstract': result.abstract[:1000],  # 限制摘要长度
+                'authors': ', '.join(result.authors[:3]),
+                'abstract': result.abstract[:1000],
                 'published_date': result.published_date,
                 'source': result.source,
                 'debate_topic': debate_topic
@@ -345,7 +419,6 @@ class RAGEnhancer:
                     key_findings = line.split('：', 1)[-1].strip()
                 elif '相关性' in line and '分' in line:
                     try:
-                        # 尝试提取数字
                         import re
                         score_match = re.search(r'(\d+)', line)
                         if score_match:
@@ -366,7 +439,7 @@ class RAGEnhancer:
             }
 
 class DynamicRAGModule:
-    """动态RAG主模块"""
+    """动态RAG主模块（增强版，支持专家角色缓存）"""
     
     def __init__(self, llm: ChatDeepSeek):
         self.llm = llm
@@ -388,8 +461,9 @@ class DynamicRAGModule:
     def search_academic_sources(self, 
                               topic: str, 
                               sources: List[str] = ["arxiv", "crossref"],
-                              max_results_per_source: int = None) -> List[SearchResult]:
-        """搜索学术数据源"""
+                              max_results_per_source: int = None,
+                              agent_role: str = "") -> List[SearchResult]:
+        """搜索学术数据源（增强版，支持角色特化）"""
         
         if max_results_per_source is None:
             max_results_per_source = RAG_CONFIG["max_results_per_source"]
@@ -398,6 +472,9 @@ class DynamicRAGModule:
         cached_results = self.cache.get_cached_results(topic, sources)
         if cached_results:
             print(f"✅ 使用缓存结果: {len(cached_results)} 篇论文")
+            # 如果有角色信息，重新排序以适合该角色
+            if agent_role and self.llm:
+                cached_results = self.enhancer.enhance_results(cached_results, topic, agent_role)
             return cached_results
         
         all_results = []
@@ -414,10 +491,10 @@ class DynamicRAGModule:
             all_results.extend(crossref_results)
             print(f"📚 CrossRef找到 {len(crossref_results)} 篇论文")
         
-        # 使用LLM增强结果
+        # 使用LLM增强结果（考虑专家角色）
         if all_results and self.llm:
-            print("🤖 使用AI分析论文相关性...")
-            all_results = self.enhancer.enhance_results(all_results, topic)
+            print(f"🤖 使用AI分析论文相关性{'（为' + agent_role + '定制）' if agent_role else ''}...")
+            all_results = self.enhancer.enhance_results(all_results, topic, agent_role)
         
         # 缓存结果
         if all_results:
@@ -428,25 +505,45 @@ class DynamicRAGModule:
     def get_rag_context_for_agent(self, 
                                  agent_role: str, 
                                  debate_topic: str, 
-                                 max_sources: int = 3) -> str:
-        """为特定角色获取RAG上下文"""
+                                 max_sources: int = 3,
+                                 force_refresh: bool = False) -> str:
+        """
+        为特定角色获取RAG上下文（优化版，支持缓存）
+        
+        Args:
+            agent_role: 专家角色
+            debate_topic: 辩论主题
+            max_sources: 最大资源数
+            force_refresh: 是否强制刷新（忽略缓存）
+        """
+        
+        # 如果不强制刷新，先检查专家缓存
+        if not force_refresh:
+            cached_context = self.cache.get_agent_cached_context(agent_role, debate_topic)
+            if cached_context:
+                print(f"📚 使用专家 {agent_role} 的缓存学术资料")
+                return cached_context
         
         # 基于角色调整搜索查询
         role_focused_query = self._create_role_focused_query(agent_role, debate_topic)
         
-        # 检索相关文献
-        results = self.search_academic_sources(role_focused_query, max_results_per_source=2)
+        # 检索相关文献（传入角色信息以便定制化分析）
+        results = self.search_academic_sources(
+            role_focused_query, 
+            max_results_per_source=2, 
+            agent_role=agent_role
+        )
         
         if not results:
-            return "暂无相关学术资料。"
-        
-        # 选择最相关的几篇
-        top_results = results[:max_sources]
-        
-        # 构建上下文
-        context_parts = []
-        for i, result in enumerate(top_results, 1):
-            context_part = f"""
+            context = "暂无相关学术资料。"
+        else:
+            # 选择最相关的几篇
+            top_results = results[:max_sources]
+            
+            # 构建上下文
+            context_parts = []
+            for i, result in enumerate(top_results, 1):
+                context_part = f"""
 参考资料 {i}:
 标题: {result.title}
 作者: {', '.join(result.authors[:2])}
@@ -454,9 +551,15 @@ class DynamicRAGModule:
 关键发现: {result.key_findings or result.abstract[:200]}
 相关性: {result.relevance_score}/10
 """
-            context_parts.append(context_part.strip())
+                context_parts.append(context_part.strip())
+            
+            context = "\n\n".join(context_parts)
         
-        return "\n\n".join(context_parts)
+        # 缓存结果
+        if context and context != "暂无相关学术资料。":
+            self.cache.cache_agent_context(agent_role, debate_topic, context)
+        
+        return context
     
     def _create_role_focused_query(self, agent_role: str, debate_topic: str) -> str:
         """基于角色创建针对性查询"""
@@ -471,6 +574,51 @@ class DynamicRAGModule:
         
         keywords = role_keywords.get(agent_role, "")
         return f"{debate_topic} {keywords}".strip()
+    
+    def preload_agent_contexts(self, agent_roles: List[str], debate_topic: str):
+        """
+        预加载所有专家的上下文（用于第一轮优化）
+        
+        Args:
+            agent_roles: 专家角色列表
+            debate_topic: 辩论主题
+        """
+        print(f"🚀 开始为 {len(agent_roles)} 位专家预加载学术资料...")
+        
+        for agent_role in agent_roles:
+            try:
+                print(f"🔍 为专家 {agent_role} 检索学术资料...")
+                context = self.get_rag_context_for_agent(
+                    agent_role=agent_role,
+                    debate_topic=debate_topic,
+                    max_sources=3,
+                    force_refresh=True  # 强制刷新确保最新资料
+                )
+                
+                if context and context != "暂无相关学术资料。":
+                    print(f"✅ 专家 {agent_role} 的学术资料已准备就绪")
+                else:
+                    print(f"⚠️ 专家 {agent_role} 未找到相关学术资料")
+                
+                # 避免API限制
+                time.sleep(2)
+                
+            except Exception as e:
+                print(f"❌ 为专家 {agent_role} 预加载资料失败: {e}")
+        
+        print("✅ 所有专家的学术资料预加载完成")
+    
+    def clear_all_caches(self):
+        """清理所有缓存"""
+        try:
+            self.cache.clear_agent_cache()
+            # 清理通用缓存
+            for filename in os.listdir(self.cache.cache_dir):
+                if filename.endswith('.json') and not filename.startswith('agent_'):
+                    os.remove(os.path.join(self.cache.cache_dir, filename))
+            print("✅ 已清理所有缓存")
+        except Exception as e:
+            print(f"❌ 清理缓存失败: {e}")
 
 # 全局RAG实例（将在graph.py中初始化）
 rag_module = None
@@ -488,7 +636,7 @@ def get_rag_module() -> Optional[DynamicRAGModule]:
 # 测试函数
 def test_rag_module():
     """测试RAG模块功能"""
-    print("🧪 开始测试RAG模块...")
+    print("🧪 开始测试优化版RAG模块...")
     
     # 创建测试LLM（需要有效的API密钥）
     try:
@@ -498,16 +646,20 @@ def test_rag_module():
         # 初始化RAG模块
         rag = initialize_rag_module(test_llm)
         
-        # 测试检索
+        # 测试专家角色检索
         test_topic = "artificial intelligence employment impact"
-        results = rag.search_academic_sources(test_topic, sources=["arxiv"])
+        test_roles = ["tech_expert", "economist", "sociologist"]
         
-        print(f"✅ 检索到 {len(results)} 篇相关论文")
-        for i, result in enumerate(results[:2], 1):
-            print(f"\n论文 {i}:")
-            print(f"标题: {result.title}")
-            print(f"相关性: {result.relevance_score}/10")
-            print(f"关键发现: {result.key_findings[:100]}...")
+        print("🔍 测试专家角色检索...")
+        for role in test_roles:
+            context = rag.get_rag_context_for_agent(role, test_topic)
+            print(f"\n✅ 专家 {role} 的上下文长度: {len(context)} 字符")
+            print(f"上下文预览: {context[:150]}...")
+        
+        # 测试缓存功能
+        print("\n🔄 测试缓存功能...")
+        context2 = rag.get_rag_context_for_agent("tech_expert", test_topic)
+        print(f"✅ 缓存测试完成，上下文长度: {len(context2)} 字符")
             
     except Exception as e:
         print(f"❌ RAG模块测试失败: {e}")
