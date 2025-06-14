@@ -1,9 +1,6 @@
 """
-多角色AI辩论系统核心逻辑 - 增强版本集成动态RAG
-支持3-6个不同角色的智能辩论，基于真实学术资料
-优化：第一轮为每个专家检索论文，后续轮次使用缓存
-修复：正确支持用户自定义的每专家最大参考文献数设置
-修复：解决NoneType错误，改进状态更新处理
+多角色AI辩论系统核心逻辑 - Kimi API集成版本
+支持3-6个不同角色的智能辩论，基于Kimi API的学术资料检索
 """
 
 from typing import TypedDict, Literal, List, Dict, Any
@@ -17,7 +14,7 @@ from langchain_deepseek import ChatDeepSeek
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.types import Command
 
-# 导入RAG模块
+# 导入基于Kimi API的RAG模块
 from rag_module import initialize_rag_module, get_rag_module, DynamicRAGModule
 
 # 加载环境变量
@@ -27,7 +24,7 @@ load_dotenv(find_dotenv())
 deepseek = None
 rag_module = None
 
-# 初始化DeepSeek模型和RAG模块
+# 初始化DeepSeek模型和基于Kimi的RAG模块
 try:
     deepseek = ChatDeepSeek(
         model="deepseek-chat",
@@ -38,9 +35,12 @@ try:
     )
     print("✅ DeepSeek模型初始化成功")
     
-    # 初始化RAG模块
+    # 初始化基于Kimi API的RAG模块
     rag_module = initialize_rag_module(deepseek)
-    print("✅ RAG模块初始化成功")
+    if rag_module:
+        print("✅ Kimi RAG模块初始化成功")
+    else:
+        print("⚠️ Kimi RAG模块初始化失败，将使用传统模式")
     
 except Exception as e:
     print(f"❌ 模型初始化失败: {e}")
@@ -49,7 +49,7 @@ except Exception as e:
 
 
 class MultiAgentDebateState(MessagesState):
-    """多角色辩论状态管理（修复版 - 支持用户RAG配置）"""
+    """多角色辩论状态管理（Kimi版 - 支持用户RAG配置）"""
     main_topic: str = "人工智能的发展前景"
     current_round: int = 0              # 当前轮次
     max_rounds: int = 3                 # 最大轮次
@@ -57,10 +57,10 @@ class MultiAgentDebateState(MessagesState):
     current_agent_index: int = 0        # 当前发言Agent索引
     total_messages: int = 0             # 总消息数
     rag_enabled: bool = True            # RAG功能开关
-    rag_sources: List[str] = ["arxiv", "crossref"]  # RAG数据源
+    rag_sources: List[str] = ["kimi"]   # RAG数据源（现在主要是Kimi）
     collected_references: List[Dict] = [] # 收集的参考文献
     
-    # 🔧 新增：用户RAG配置支持
+    # 用户RAG配置支持
     max_refs_per_agent: int = 3         # 每个专家的最大参考文献数（用户设置）
     max_results_per_source: int = 2     # 每个数据源的最大检索数（可选配置）
     
@@ -69,7 +69,7 @@ class MultiAgentDebateState(MessagesState):
     first_round_rag_completed: List[str] = []  # 已完成第一轮RAG检索的专家列表
 
 
-# 定义所有可用的角色（保持原有定义）
+# 定义所有可用的角色
 AVAILABLE_ROLES = {
     "environmentalist": {
         "name": "环保主义者",
@@ -80,7 +80,7 @@ AVAILABLE_ROLES = {
         "perspective": "任何决策都应考虑对环境的长远影响",
         "bio": "专业的环境保护主义者，拥有环境科学博士学位。长期关注气候变化、生物多样性保护和可持续发展。坚信经济发展必须与环境保护相协调，主张采用清洁技术和循环经济模式。",
         "speaking_style": "理性分析环境数据，引用科学研究，强调长期后果",
-        "rag_keywords": "environment climate sustainability ecology conservation"
+        "kimi_keywords": "环境保护 气候变化 可持续发展 生态影响 环境科学"
     },
     
     "economist": {
@@ -92,7 +92,7 @@ AVAILABLE_ROLES = {
         "perspective": "追求经济效率和市场最优解决方案",
         "bio": "资深经济学教授，专攻宏观经济学和政策分析。擅长成本效益分析、市场失灵研究和经济政策评估。相信市场机制的力量，但也认识到政府干预的必要性。",
         "speaking_style": "用数据说话，分析成本收益，关注市场效率和经济可行性",
-        "rag_keywords": "economic cost benefit market analysis finance"
+        "kimi_keywords": "经济影响 成本效益 市场分析 经济政策 宏观经济"
     },
     
     "policy_maker": {
@@ -104,7 +104,7 @@ AVAILABLE_ROLES = {
         "perspective": "平衡各方利益，制定可执行的政策",
         "bio": "资深公务员和政策分析师，拥有公共管理硕士学位。在政府部门工作多年，熟悉政策制定流程、法律法规和实施挑战。善于协调各方利益，寻求平衡解决方案。",
         "speaking_style": "考虑实施难度，关注法律框架，寻求各方共识",
-        "rag_keywords": "policy governance regulation implementation law"
+        "kimi_keywords": "政策制定 监管措施 治理框架 实施策略 公共政策"
     },
     
     "tech_expert": {
@@ -116,7 +116,7 @@ AVAILABLE_ROLES = {
         "perspective": "技术进步是解决问题的关键驱动力",
         "bio": "计算机科学博士，在科技公司担任首席技术官。专注于人工智能、机器学习和新兴技术研发。相信技术创新能够解决人类面临的重大挑战，但也关注技术伦理问题。",
         "speaking_style": "分析技术可行性，讨论创新解决方案，关注实现路径",
-        "rag_keywords": "technology innovation technical feasibility AI"
+        "kimi_keywords": "技术创新 技术可行性 技术发展 技术影响 前沿科技"
     },
     
     "sociologist": {
@@ -128,7 +128,7 @@ AVAILABLE_ROLES = {
         "perspective": "关注对不同社会群体的影响和社会公平",
         "bio": "社会学教授，专注于社会变迁、不平等研究和社会政策分析。长期关注技术变革对社会结构的影响，特别是对弱势群体的影响。主张包容性发展和社会公正。",
         "speaking_style": "关注社会公平，分析对不同群体的影响，强调人文关怀",
-        "rag_keywords": "social impact society community effects inequality"
+        "kimi_keywords": "社会影响 社会变化 社群效应 社会公平 社会学研究"
     },
     
     "ethicist": {
@@ -140,12 +140,12 @@ AVAILABLE_ROLES = {
         "perspective": "坚持道德原则和伦理标准",
         "bio": "哲学博士，专攻应用伦理学和技术伦理。在大学教授道德哲学，并为政府和企业提供伦理咨询。关注新技术带来的伦理挑战，主张在发展中坚持道德底线。",
         "speaking_style": "引用伦理原则，分析道德后果，坚持价值标准",
-        "rag_keywords": "ethics moral responsibility values philosophy"
+        "kimi_keywords": "伦理道德 道德责任 价值观念 伦理框架 道德哲学"
     }
 }
 
 
-# 增强版多角色辩论提示词模板（集成RAG）
+# 增强版多角色辩论提示词模板（集成Kimi RAG）
 ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE = """
 你是一位{role} - {name}。
 
@@ -165,7 +165,7 @@ ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE = """
 【其他参与者】
 {other_participants}
 
-【学术参考资料】
+【基于Kimi API检索的真实学术参考资料】
 {rag_context}
 
 【对话历史】
@@ -173,15 +173,17 @@ ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE = """
 
 【发言要求】
 1. 基于你的专业背景和角色定位发表观点
-2. 适当引用上述学术资料支撑你的论点（简要提及即可）
+2. 如果上述Kimi检索提供了相关学术资料，可以适当引用支撑你的论点（简要提及即可）
 3. 针对前面发言者的观点进行回应或补充
 4. 保持你的角色特色和专业立场
 5. 回复控制在2-4句话，言简意赅但有说服力
 6. 可以同意其他角色的合理观点，但要提出自己独特的见解
 7. 直接表达观点，不需要加名字前缀
-8. 如果引用研究，请简洁地说明（如"根据最新研究表明..."）
+8. 如果引用Kimi检索的研究，请简洁地说明（如"根据最新研究表明..."）
 
-请从你的专业角度，结合学术资料发表观点：
+重要提醒：引用的学术资料必须是真实存在的，不要编造虚假的论文或数据。
+
+请从你的专业角度，结合真实的Kimi检索学术资料发表观点：
 """
 
 
@@ -189,7 +191,7 @@ def create_enhanced_chat_template():
     """创建增强版聊天模板"""
     return ChatPromptTemplate.from_messages([
         ("system", ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE),
-        ("user", "请基于以上背景和学术资料发表你的专业观点"),
+        ("user", "请基于以上背景和Kimi检索的真实学术资料发表你的专业观点"),
     ])
 
 
@@ -232,21 +234,20 @@ def get_other_participants(active_agents: List[str], current_agent: str) -> str:
 
 def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAgentDebateState) -> str:
     """
-    为Agent获取RAG上下文（修复版 - 正确支持用户设置）
-    第一轮：检索并缓存论文
+    为Agent获取RAG上下文（Kimi版 - 支持用户设置）
+    第一轮：使用Kimi检索并缓存论文
     后续轮次：使用缓存的论文
     """
     
     # 检查RAG是否启用
     if not state.get("rag_enabled", True) or not rag_module:
-        return "当前未启用学术资料检索功能。"
+        return "当前未启用Kimi学术资料检索功能。"
     
-    # 🔧 关键修复：从状态读取用户设置的参考文献数量
+    # 从状态读取用户设置的参考文献数量
     max_refs_per_agent = state.get("max_refs_per_agent", 3)
     max_results_per_source = state.get("max_results_per_source", 2)
     
-    # 🔧 调试日志：验证是否正确读取用户设置
-    print(f"🔧 RAG配置验证：为{AVAILABLE_ROLES[agent_key]['name']}设置最大文献数为 {max_refs_per_agent} 篇（来自用户设置）")
+    print(f"🔍 为{AVAILABLE_ROLES[agent_key]['name']}检索Kimi学术资料，设置最大文献数为 {max_refs_per_agent} 篇")
     
     # 检查当前轮次
     current_round = state.get("current_round", 1)
@@ -254,16 +255,15 @@ def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAge
     first_round_rag_completed = state.get("first_round_rag_completed", [])
     
     try:
-        # 如果是第一轮且该专家还未检索过，进行检索并缓存
+        # 如果是第一轮且该专家还未检索过，进行Kimi检索并缓存
         if current_round == 1 and agent_key not in first_round_rag_completed:
-            print(f"🔍 第一轮：为{AVAILABLE_ROLES[agent_key]['name']}检索专属学术资料...")
-            print(f"📊 用户设置确认：每专家最多{max_refs_per_agent}篇参考文献，每源{max_results_per_source}篇")
+            print(f"🔍 第一轮：为{AVAILABLE_ROLES[agent_key]['name']}使用Kimi检索真实学术资料...")
             
-            # 🔧 关键修复：使用用户设置的数量而不是硬编码
+            # 使用用户设置的数量而不是硬编码
             context = rag_module.get_rag_context_for_agent(
                 agent_role=agent_key,
                 debate_topic=debate_topic,
-                max_sources=max_refs_per_agent,  # ✅ 使用用户设置！
+                max_sources=max_refs_per_agent,  # 使用用户设置
                 max_results_per_source=max_results_per_source,
                 force_refresh=True  # 强制刷新确保最新资料
             )
@@ -273,13 +273,12 @@ def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAge
                 agent_paper_cache[agent_key] = context
                 first_round_rag_completed.append(agent_key)
                 
-                # 🔧 验证日志：检查实际效果
                 actual_ref_count = context.count('参考资料')
-                print(f"✅ 检索成功：{AVAILABLE_ROLES[agent_key]['name']}实际获得{actual_ref_count}篇资料（用户设置{max_refs_per_agent}篇）")
+                print(f"✅ Kimi检索成功：{AVAILABLE_ROLES[agent_key]['name']}获得{actual_ref_count}篇真实资料")
                 
                 return context
             else:
-                print(f"⚠️ {AVAILABLE_ROLES[agent_key]['name']}未找到相关学术资料")
+                print(f"⚠️ {AVAILABLE_ROLES[agent_key]['name']}未通过Kimi找到相关学术资料")
                 return "暂未找到直接相关的最新学术研究，请基于你的专业知识发表观点。"
         
         # 如果不是第一轮或该专家已检索过，使用缓存
@@ -294,13 +293,13 @@ def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAge
             return "暂未找到直接相关的最新学术研究，请基于你的专业知识发表观点。"
         
     except Exception as e:
-        print(f"❌ 获取{agent_key}的RAG上下文失败: {e}")
-        return "学术资料检索遇到技术问题，请基于你的专业知识发表观点。"
+        print(f"❌ 获取{agent_key}的Kimi RAG上下文失败: {e}")
+        return "Kimi学术资料检索遇到技术问题，请基于你的专业知识发表观点。"
 
 
 def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Dict[str, Any]:
     """
-    生成指定Agent的回复（修复版，集成RAG，支持用户配置）
+    生成指定Agent的回复（Kimi版，集成Kimi RAG，支持用户配置）
     
     Args:
         state: 当前辩论状态
@@ -328,13 +327,13 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
         # 获取其他参与者信息
         other_participants = get_other_participants(state["active_agents"], agent_key)
         
-        # 计算当前轮次和位置信息（修复版）
+        # 计算当前轮次和位置信息
         current_total_messages = state.get("total_messages", 0)
         active_agents_count = len(state["active_agents"])
         current_round = (current_total_messages // active_agents_count) + 1
         agent_position_in_round = (current_total_messages % active_agents_count) + 1
         
-        # 🔧 获取RAG上下文（修复后的版本，支持用户配置）
+        # 获取Kimi RAG上下文（支持用户配置）
         rag_context = get_rag_context_for_agent(agent_key, state["main_topic"], state)
         
         # 调用模型生成回复
@@ -360,7 +359,7 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
         
         print(f"🗣️ 第{current_round}轮 {agent_info['name']}: {response}")
         
-        # 计算新的状态（修复版）
+        # 计算新的状态
         new_total_messages = current_total_messages + 1
         new_agent_index = state.get("current_agent_index", 0) + 1
         new_round = (new_total_messages // active_agents_count) + 1
@@ -373,7 +372,7 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
             "current_round": new_round,
         }
         
-        # 如果在第一轮完成了RAG检索，更新缓存状态
+        # 如果在第一轮完成了Kimi RAG检索，更新缓存状态
         if current_round == 1:
             agent_paper_cache = state.get("agent_paper_cache", {})
             first_round_rag_completed = state.get("first_round_rag_completed", [])
@@ -396,12 +395,10 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
 
 
 def create_agent_node_function(agent_key: str):
-    """
-    为指定Agent创建节点函数（修复版 - 解决NoneType错误和第一个专家多发言问题）
-    """
+    """为指定Agent创建节点函数（Kimi版）"""
     def agent_node(state: MultiAgentDebateState) -> Command:
         try:
-            # 1. 首先检查是否应该结束辩论（在发言前检查）
+            # 首先检查是否应该结束辩论
             current_total_messages = state.get("total_messages", 0)
             active_agents = state.get("active_agents", [])
             max_rounds = state.get("max_rounds", 3)
@@ -410,7 +407,7 @@ def create_agent_node_function(agent_key: str):
             if not active_agents:
                 print("❌ 活跃agents列表为空，辩论结束")
                 return Command(
-                    update={"messages": []},  # 🔧 确保返回messages键
+                    update={"messages": []},
                     goto=END
                 )
             
@@ -419,24 +416,24 @@ def create_agent_node_function(agent_key: str):
             
             # 如果当前轮次已经超过最大轮次，直接结束
             if current_round > max_rounds:
-                print(f"🏁 辩论结束：已完成 {max_rounds} 轮，共 {current_total_messages} 条发言")
+                print(f"🏁 Kimi辩论结束：已完成 {max_rounds} 轮，共 {current_total_messages} 条发言")
                 return Command(
-                    update={"messages": []},  # 🔧 确保返回messages键
+                    update={"messages": []},
                     goto=END
                 )
             
-            # 2. 检查当前轮次是否已经完成
+            # 检查当前轮次是否已经完成
             messages_in_current_round = current_total_messages % len(active_agents)
             
             # 如果当前轮次已经完成且达到最大轮次，结束辩论
             if current_round == max_rounds and messages_in_current_round == 0 and current_total_messages > 0:
-                print(f"🏁 辩论结束：已完成 {max_rounds} 轮，共 {current_total_messages} 条发言")
+                print(f"🏁 Kimi辩论结束：已完成 {max_rounds} 轮，共 {current_total_messages} 条发言")
                 return Command(
-                    update={"messages": []},  # 🔧 确保返回messages键
+                    update={"messages": []},
                     goto=END
                 )
             
-            # 3. 确认当前应该发言的专家
+            # 确认当前应该发言的专家
             expected_agent_index = current_total_messages % len(active_agents)
             expected_agent = active_agents[expected_agent_index]
             
@@ -444,15 +441,15 @@ def create_agent_node_function(agent_key: str):
             if agent_key != expected_agent:
                 print(f"🔄 跳转到正确的发言者：{expected_agent}")
                 return Command(
-                    update={"messages": []},  # 🔧 确保返回messages键，避免NoneType错误
+                    update={"messages": []},
                     goto=expected_agent
                 )
             
-            # 4. 生成回复
+            # 生成回复
             try:
                 update_data = _generate_agent_response(state, agent_key)
                 
-                # 🔧 安全检查：确保update_data包含必要的键
+                # 安全检查：确保update_data包含必要的键
                 if not update_data or "messages" not in update_data:
                     print(f"❌ {agent_key} 生成的回复数据无效")
                     update_data = {
@@ -462,13 +459,13 @@ def create_agent_node_function(agent_key: str):
                         "current_round": current_round,
                     }
                 
-                # 5. 确定下一个节点
+                # 确定下一个节点
                 new_total_messages = update_data.get("total_messages", current_total_messages + 1)
                 new_round = (new_total_messages // len(active_agents)) + 1
                 
                 # 检查辩论是否应该结束
                 if new_round > max_rounds:
-                    print(f"🏁 辩论结束：已完成 {max_rounds} 轮，共 {new_total_messages} 条发言")
+                    print(f"🏁 Kimi辩论结束：已完成 {max_rounds} 轮，共 {new_total_messages} 条发言")
                     next_node = END
                 else:
                     # 确定下一个发言者
@@ -492,7 +489,7 @@ def create_agent_node_function(agent_key: str):
         
         except Exception as e:
             print(f"❌ 专家节点 {agent_key} 处理失败: {e}")
-            # 🔧 最终兜底：确保总是返回有效的update
+            # 最终兜底：确保总是返回有效的update
             safe_update = {
                 "messages": [AIMessage(content=f"系统错误：{agent_key} 无法处理")],
                 "total_messages": state.get("total_messages", 0) + 1,
@@ -505,7 +502,7 @@ def create_agent_node_function(agent_key: str):
 
 def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True) -> StateGraph:
     """
-    创建多角色辞论图（修复版，支持用户RAG配置）
+    创建多角色辩论图（Kimi版，支持用户RAG配置）
     
     Args:
         active_agents: 活跃Agent列表
@@ -515,10 +512,10 @@ def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True)
         StateGraph: 编译后的图
     """
     if len(active_agents) < 3:
-        raise ValueError("至少需要3个Agent参与辞论")
+        raise ValueError("至少需要3个Agent参与辩论")
     
     if len(active_agents) > 6:
-        raise ValueError("最多支持6个Agent参与辞论")
+        raise ValueError("最多支持6个Agent参与辩论")
     
     # 验证所有Agent都存在
     for agent_key in active_agents:
@@ -538,11 +535,10 @@ def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True)
     builder.add_edge(START, first_agent)
     
     # 输出创建信息
-    rag_status = "✅ 已启用（第一轮检索+缓存，支持用户配置）" if rag_enabled and rag_module else "❌ 未启用"
-    print(f"✅ 创建修复版多角色辞论图成功")
+    rag_status = "✅ 已启用（Kimi API第一轮检索+缓存）" if rag_enabled and rag_module else "❌ 未启用"
+    print(f"✅ 创建Kimi版多角色辩论图成功")
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in active_agents]}")
-    print(f"📚 RAG学术检索: {rag_status}")
-    print(f"🔧 修复内容: 支持用户自定义参考文献数量设置，解决NoneType错误")
+    print(f"📚 Kimi学术检索: {rag_status}")
     
     return builder.compile()
 
@@ -552,23 +548,21 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
                                    agents: List[str] = None,
                                    enable_rag: bool = True,
                                    max_refs_per_agent: int = 3):
-    """
-    测试增强版多角色辞论功能（支持用户RAG配置测试）
-    """
+    """测试增强版多角色辩论功能（Kimi API版）"""
     if agents is None:
         agents = ["tech_expert", "sociologist", "ethicist"]
     
-    print(f"🎯 开始测试优化版多角色辞论: {topic}")
+    print(f"🎯 开始测试Kimi版多角色辩论: {topic}")
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in agents]}")
-    print(f"📊 辞论轮数: {rounds}")
-    print(f"📚 RAG检索: {'启用' if enable_rag else '禁用'}")
-    print(f"📄 每专家文献数: {max_refs_per_agent} 篇（用户设置测试）")
+    print(f"📊 辩论轮数: {rounds}")
+    print(f"📚 Kimi检索: {'启用' if enable_rag else '禁用'}")
+    print(f"📄 每专家文献数: {max_refs_per_agent} 篇")
     print("=" * 70)
     
     try:
         test_graph = create_multi_agent_graph(agents, rag_enabled=enable_rag)
         
-        # 🔧 测试用户配置传递
+        # 测试用户配置传递
         inputs = {
             "main_topic": topic,
             "messages": [],
@@ -578,36 +572,32 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
             "current_agent_index": 0,
             "total_messages": 0,
             "rag_enabled": enable_rag,
-            "rag_sources": ["arxiv", "crossref"],
+            "rag_sources": ["kimi"],  # 使用Kimi作为数据源
             "collected_references": [],
-            # 🔧 关键测试：用户配置
             "max_refs_per_agent": max_refs_per_agent,
             "max_results_per_source": 2,
             "agent_paper_cache": {},
             "first_round_rag_completed": []
         }
         
-        print(f"🔧 测试配置确认：每专家{max_refs_per_agent}篇参考文献")
+        print(f"🔍 Kimi测试配置：每专家{max_refs_per_agent}篇参考文献")
         
         for i, output in enumerate(test_graph.stream(inputs, stream_mode="updates"), 1):
             print(f"消息 {i}: {output}")
             
         print("=" * 70)
-        print("✅ 修复版多角色辞论测试完成!")
-        print(f"🔧 如果看到每专家引用了{max_refs_per_agent}篇文献，说明用户设置修复成功")
+        print("✅ Kimi版多角色辩论测试完成!")
         
     except Exception as e:
-        print(f"❌ 测试过程中出现错误: {e}")
+        print(f"❌ Kimi测试过程中出现错误: {e}")
 
 
 def test_rounds_control(agents: List[str] = None, rounds: int = 3):
-    """
-    测试轮次控制修复效果
-    """
+    """测试轮次控制（Kimi版）"""
     if agents is None:
         agents = ["tech_expert", "economist", "sociologist"]
     
-    print(f"🧪 测试轮次控制修复效果")
+    print(f"🧪 测试Kimi版轮次控制")
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in agents]}")
     print(f"🔄 设定轮次: {rounds}")
     print(f"📊 预期总发言数: {len(agents) * rounds}")
@@ -659,48 +649,54 @@ def test_rounds_control(agents: List[str] = None, rounds: int = 3):
             status = "✅" if count == expected else "❌"
             print(f"{status} {agent_name}: {count} 次发言 (预期: {expected})")
         
-        # 检查修复效果
+        # 检查结果
         expected_total = len(agents) * rounds
         if total_messages == expected_total:
-            print("🎉 修复成功！所有专家发言次数均正确")
+            print("🎉 成功！所有专家发言次数均正确")
         else:
             print(f"❌ 仍有问题：实际 {total_messages} 次发言，预期 {expected_total} 次")
-            
-        # 检查每个专家的发言次数
-        all_correct = all(speaker_count[agent] == rounds for agent in agents)
-        if all_correct:
-            print("✅ 每个专家的发言次数都正确")
-        else:
-            print("❌ 部分专家发言次数不正确")
             
     except Exception as e:
         print(f"❌ 测试过程中出现错误: {e}")
 
 
-# 工具函数：预热RAG系统
-def warmup_rag_system(test_topic: str = "artificial intelligence"):
-    """预热RAG系统，预加载常见主题的检索结果"""
+# 工具函数：预热Kimi RAG系统
+def warmup_rag_system(test_topic: str = "人工智能"):
+    """预热Kimi RAG系统，测试API连接"""
     if rag_module:
-        print("🔥 预热RAG系统...")
+        print("🔥 预热Kimi RAG系统...")
         try:
-            rag_module.search_academic_sources(test_topic, max_results_per_source=2)
-            print("✅ RAG系统预热完成")
+            # 测试一个简单的检索请求
+            test_results = rag_module.search_academic_sources(test_topic, max_results_per_source=1)
+            if test_results:
+                print("✅ Kimi RAG系统预热完成，API连接正常")
+            else:
+                print("⚠️ Kimi RAG系统预热完成，但未检索到测试结果")
         except Exception as e:
-            print(f"⚠️ RAG系统预热失败: {e}")
+            print(f"⚠️ Kimi RAG系统预热失败: {e}")
 
 
 # 主程序入口
 if __name__ == "__main__":
     # 检查环境变量
+    missing_keys = []
     if not os.getenv("DEEPSEEK_API_KEY"):
-        print("❌ 警告: DEEPSEEK_API_KEY 环境变量未设置")
+        missing_keys.append("DEEPSEEK_API_KEY")
+    if not os.getenv("KIMI_API_KEY"):
+        missing_keys.append("KIMI_API_KEY")
+    
+    if missing_keys:
+        print(f"❌ 警告: {', '.join(missing_keys)} 环境变量未设置")
+        print("请设置以下环境变量：")
+        for key in missing_keys:
+            print(f"export {key}=your_api_key")
     else:
         print("✅ 环境变量配置正确")
         
-        # 预热RAG系统
+        # 预热Kimi RAG系统
         warmup_rag_system()
         
-        # 测试轮次控制修复
+        # 测试轮次控制
         test_rounds_control(
             agents=["tech_expert", "economist", "sociologist"],
             rounds=3
@@ -708,11 +704,11 @@ if __name__ == "__main__":
         
         print("\n" + "="*50 + "\n")
         
-        # 测试用户RAG配置修复
+        # 测试Kimi RAG配置
         test_enhanced_multi_agent_debate(
             topic="ChatGPT对教育的影响",
             rounds=2,
             agents=["tech_expert", "sociologist", "ethicist"],
             enable_rag=True,
-            max_refs_per_agent=5  # 测试用户自定义设置
+            max_refs_per_agent=3
         )
