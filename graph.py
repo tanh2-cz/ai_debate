@@ -3,6 +3,7 @@
 支持3-6个不同角色的智能辩论，基于真实学术资料
 优化：第一轮为每个专家检索论文，后续轮次使用缓存
 修复：正确支持用户自定义的每专家最大参考文献数设置
+修复：解决NoneType错误，改进状态更新处理
 """
 
 from typing import TypedDict, Literal, List, Dict, Any
@@ -396,75 +397,115 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
 
 def create_agent_node_function(agent_key: str):
     """
-    为指定Agent创建节点函数（修复版 - 解决第一个专家多发言问题）
+    为指定Agent创建节点函数（修复版 - 解决NoneType错误和第一个专家多发言问题）
     """
     def agent_node(state: MultiAgentDebateState) -> Command:
-        # 1. 首先检查是否应该结束辩论（在发言前检查）
-        current_total_messages = state.get("total_messages", 0)
-        active_agents = state["active_agents"]
-        max_rounds = state.get("max_rounds", 3)
-        
-        # 计算当前应该是第几轮
-        current_round = (current_total_messages // len(active_agents)) + 1
-        
-        # 如果当前轮次已经超过最大轮次，直接结束
-        if current_round > max_rounds:
-            print(f"🏁 辩论结束：已完成 {max_rounds} 轮，共 {current_total_messages} 条发言")
-            return Command(update={}, goto=END)
-        
-        # 2. 检查当前轮次是否已经完成
-        messages_in_current_round = current_total_messages % len(active_agents)
-        
-        # 如果当前轮次已经完成且达到最大轮次，结束辩论
-        if current_round == max_rounds and messages_in_current_round == 0 and current_total_messages > 0:
-            print(f"🏁 辩论结束：已完成 {max_rounds} 轮，共 {current_total_messages} 条发言")
-            return Command(update={}, goto=END)
-        
-        # 3. 确认当前应该发言的专家
-        expected_agent_index = current_total_messages % len(active_agents)
-        expected_agent = active_agents[expected_agent_index]
-        
-        # 如果当前节点不是应该发言的专家，跳转到正确的专家
-        if agent_key != expected_agent:
-            print(f"🔄 跳转到正确的发言者：{expected_agent}")
-            return Command(update={}, goto=expected_agent)
-        
-        # 4. 生成回复
         try:
-            update_data = _generate_agent_response(state, agent_key)
+            # 1. 首先检查是否应该结束辩论（在发言前检查）
+            current_total_messages = state.get("total_messages", 0)
+            active_agents = state.get("active_agents", [])
+            max_rounds = state.get("max_rounds", 3)
             
-            # 5. 确定下一个节点
-            new_total_messages = update_data.get("total_messages", current_total_messages + 1)
-            new_round = (new_total_messages // len(active_agents)) + 1
+            # 安全检查：确保活跃agents列表不为空
+            if not active_agents:
+                print("❌ 活跃agents列表为空，辩论结束")
+                return Command(
+                    update={"messages": []},  # 🔧 确保返回messages键
+                    goto=END
+                )
             
-            # 检查辩论是否应该结束
-            if new_round > max_rounds:
-                print(f"🏁 辩论结束：已完成 {max_rounds} 轮，共 {new_total_messages} 条发言")
-                next_node = END
-            else:
-                # 确定下一个发言者
-                next_agent_index = new_total_messages % len(active_agents)
-                next_agent_key = active_agents[next_agent_index]
-                next_node = next_agent_key
+            # 计算当前应该是第几轮
+            current_round = (current_total_messages // len(active_agents)) + 1
+            
+            # 如果当前轮次已经超过最大轮次，直接结束
+            if current_round > max_rounds:
+                print(f"🏁 辩论结束：已完成 {max_rounds} 轮，共 {current_total_messages} 条发言")
+                return Command(
+                    update={"messages": []},  # 🔧 确保返回messages键
+                    goto=END
+                )
+            
+            # 2. 检查当前轮次是否已经完成
+            messages_in_current_round = current_total_messages % len(active_agents)
+            
+            # 如果当前轮次已经完成且达到最大轮次，结束辩论
+            if current_round == max_rounds and messages_in_current_round == 0 and current_total_messages > 0:
+                print(f"🏁 辩论结束：已完成 {max_rounds} 轮，共 {current_total_messages} 条发言")
+                return Command(
+                    update={"messages": []},  # 🔧 确保返回messages键
+                    goto=END
+                )
+            
+            # 3. 确认当前应该发言的专家
+            expected_agent_index = current_total_messages % len(active_agents)
+            expected_agent = active_agents[expected_agent_index]
+            
+            # 如果当前节点不是应该发言的专家，跳转到正确的专家
+            if agent_key != expected_agent:
+                print(f"🔄 跳转到正确的发言者：{expected_agent}")
+                return Command(
+                    update={"messages": []},  # 🔧 确保返回messages键，避免NoneType错误
+                    goto=expected_agent
+                )
+            
+            # 4. 生成回复
+            try:
+                update_data = _generate_agent_response(state, agent_key)
                 
-                print(f"📊 轮次状态：第 {new_round} 轮，总发言 {new_total_messages} 条，下一位：{AVAILABLE_ROLES[next_agent_key]['name']}")
-            
-            return Command(update=update_data, goto=next_node)
-            
+                # 🔧 安全检查：确保update_data包含必要的键
+                if not update_data or "messages" not in update_data:
+                    print(f"❌ {agent_key} 生成的回复数据无效")
+                    update_data = {
+                        "messages": [AIMessage(content=f"{AVAILABLE_ROLES[agent_key]['name']}: 抱歉，我现在无法发言。")],
+                        "total_messages": current_total_messages + 1,
+                        "current_agent_index": state.get("current_agent_index", 0) + 1,
+                        "current_round": current_round,
+                    }
+                
+                # 5. 确定下一个节点
+                new_total_messages = update_data.get("total_messages", current_total_messages + 1)
+                new_round = (new_total_messages // len(active_agents)) + 1
+                
+                # 检查辩论是否应该结束
+                if new_round > max_rounds:
+                    print(f"🏁 辩论结束：已完成 {max_rounds} 轮，共 {new_total_messages} 条发言")
+                    next_node = END
+                else:
+                    # 确定下一个发言者
+                    next_agent_index = new_total_messages % len(active_agents)
+                    next_agent_key = active_agents[next_agent_index]
+                    next_node = next_agent_key
+                    
+                    print(f"📊 轮次状态：第 {new_round} 轮，总发言 {new_total_messages} 条，下一位：{AVAILABLE_ROLES[next_agent_key]['name']}")
+                
+                return Command(update=update_data, goto=next_node)
+                
+            except Exception as e:
+                print(f"❌ 专家 {agent_key} 发言失败: {e}")
+                error_update = {
+                    "messages": [AIMessage(content=f"{AVAILABLE_ROLES[agent_key]['name']}: 抱歉，技术问题导致无法发言。")],
+                    "total_messages": current_total_messages + 1,
+                    "current_agent_index": state.get("current_agent_index", 0) + 1,
+                    "current_round": current_round,
+                }
+                return Command(update=error_update, goto=END)
+        
         except Exception as e:
-            print(f"❌ 专家 {agent_key} 发言失败: {e}")
-            error_update = {
-                "total_messages": current_total_messages + 1,
+            print(f"❌ 专家节点 {agent_key} 处理失败: {e}")
+            # 🔧 最终兜底：确保总是返回有效的update
+            safe_update = {
+                "messages": [AIMessage(content=f"系统错误：{agent_key} 无法处理")],
+                "total_messages": state.get("total_messages", 0) + 1,
                 "current_agent_index": state.get("current_agent_index", 0) + 1,
             }
-            return Command(update=error_update, goto=END)
+            return Command(update=safe_update, goto=END)
     
     return agent_node
 
 
 def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True) -> StateGraph:
     """
-    创建多角色辩论图（修复版，支持用户RAG配置）
+    创建多角色辞论图（修复版，支持用户RAG配置）
     
     Args:
         active_agents: 活跃Agent列表
@@ -474,10 +515,10 @@ def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True)
         StateGraph: 编译后的图
     """
     if len(active_agents) < 3:
-        raise ValueError("至少需要3个Agent参与辩论")
+        raise ValueError("至少需要3个Agent参与辞论")
     
     if len(active_agents) > 6:
-        raise ValueError("最多支持6个Agent参与辩论")
+        raise ValueError("最多支持6个Agent参与辞论")
     
     # 验证所有Agent都存在
     for agent_key in active_agents:
@@ -498,10 +539,10 @@ def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True)
     
     # 输出创建信息
     rag_status = "✅ 已启用（第一轮检索+缓存，支持用户配置）" if rag_enabled and rag_module else "❌ 未启用"
-    print(f"✅ 创建修复版多角色辩论图成功")
+    print(f"✅ 创建修复版多角色辞论图成功")
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in active_agents]}")
     print(f"📚 RAG学术检索: {rag_status}")
-    print(f"🔧 修复内容: 支持用户自定义参考文献数量设置")
+    print(f"🔧 修复内容: 支持用户自定义参考文献数量设置，解决NoneType错误")
     
     return builder.compile()
 
@@ -512,14 +553,14 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
                                    enable_rag: bool = True,
                                    max_refs_per_agent: int = 3):
     """
-    测试增强版多角色辩论功能（支持用户RAG配置测试）
+    测试增强版多角色辞论功能（支持用户RAG配置测试）
     """
     if agents is None:
         agents = ["tech_expert", "sociologist", "ethicist"]
     
-    print(f"🎯 开始测试优化版多角色辩论: {topic}")
+    print(f"🎯 开始测试优化版多角色辞论: {topic}")
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in agents]}")
-    print(f"📊 辩论轮数: {rounds}")
+    print(f"📊 辞论轮数: {rounds}")
     print(f"📚 RAG检索: {'启用' if enable_rag else '禁用'}")
     print(f"📄 每专家文献数: {max_refs_per_agent} 篇（用户设置测试）")
     print("=" * 70)
@@ -552,7 +593,7 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
             print(f"消息 {i}: {output}")
             
         print("=" * 70)
-        print("✅ 修复版多角色辩论测试完成!")
+        print("✅ 修复版多角色辞论测试完成!")
         print(f"🔧 如果看到每专家引用了{max_refs_per_agent}篇文献，说明用户设置修复成功")
         
     except Exception as e:

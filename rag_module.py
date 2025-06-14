@@ -3,6 +3,7 @@
 支持arXiv、CrossRef等学术数据源的真实检索
 修复：支持用户自定义的每专家最大参考文献数设置
 优化：支持基于专家角色的缓存机制
+增强：更好的错误处理和异常安全性
 """
 
 import os
@@ -55,28 +56,40 @@ class RAGCache:
     def __init__(self, cache_dir: str = "./rag_cache"):
         self.cache_dir = cache_dir
         self.agent_cache_dir = os.path.join(cache_dir, "agent_cache")
-        os.makedirs(cache_dir, exist_ok=True)
-        os.makedirs(self.agent_cache_dir, exist_ok=True)
+        
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            os.makedirs(self.agent_cache_dir, exist_ok=True)
+        except Exception as e:
+            print(f"⚠️ 缓存目录创建失败: {e}")
     
     def _get_cache_key(self, query: str, sources: List[str]) -> str:
         """生成缓存键"""
-        key_string = f"{query}_{'-'.join(sorted(sources))}"
-        return hashlib.md5(key_string.encode()).hexdigest()
+        try:
+            key_string = f"{query}_{'-'.join(sorted(sources))}"
+            return hashlib.md5(key_string.encode()).hexdigest()
+        except Exception as e:
+            print(f"⚠️ 缓存键生成失败: {e}")
+            return f"fallback_{hash(query)}"
     
     def _get_agent_cache_key(self, agent_role: str, debate_topic: str) -> str:
         """生成专家角色特定的缓存键"""
-        key_string = f"agent_{agent_role}_{debate_topic}"
-        return hashlib.md5(key_string.encode()).hexdigest()
+        try:
+            key_string = f"agent_{agent_role}_{debate_topic}"
+            return hashlib.md5(key_string.encode()).hexdigest()
+        except Exception as e:
+            print(f"⚠️ 专家缓存键生成失败: {e}")
+            return f"agent_fallback_{agent_role}_{hash(debate_topic)}"
     
     def get_cached_results(self, query: str, sources: List[str]) -> Optional[List[SearchResult]]:
         """获取缓存的检索结果"""
-        cache_key = self._get_cache_key(query, sources)
-        cache_file = os.path.join(self.cache_dir, f"{cache_key}.json")
-        
-        if not os.path.exists(cache_file):
-            return None
-        
         try:
+            cache_key = self._get_cache_key(query, sources)
+            cache_file = os.path.join(self.cache_dir, f"{cache_key}.json")
+            
+            if not os.path.exists(cache_file):
+                return None
+            
             with open(cache_file, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
             
@@ -89,7 +102,11 @@ class RAGCache:
             # 重构SearchResult对象
             results = []
             for item in cache_data['results']:
-                results.append(SearchResult(**item))
+                try:
+                    results.append(SearchResult(**item))
+                except Exception as e:
+                    print(f"⚠️ 缓存结果解析失败: {e}")
+                    continue
             
             return results
             
@@ -99,10 +116,10 @@ class RAGCache:
     
     def cache_results(self, query: str, sources: List[str], results: List[SearchResult]):
         """缓存检索结果"""
-        cache_key = self._get_cache_key(query, sources)
-        cache_file = os.path.join(self.cache_dir, f"{cache_key}.json")
-        
         try:
+            cache_key = self._get_cache_key(query, sources)
+            cache_file = os.path.join(self.cache_dir, f"{cache_key}.json")
+            
             cache_data = {
                 'timestamp': datetime.now().isoformat(),
                 'query': query,
@@ -118,13 +135,13 @@ class RAGCache:
     
     def get_agent_cached_context(self, agent_role: str, debate_topic: str) -> Optional[str]:
         """获取专家角色特定的缓存上下文"""
-        cache_key = self._get_agent_cache_key(agent_role, debate_topic)
-        cache_file = os.path.join(self.agent_cache_dir, f"{cache_key}.json")
-        
-        if not os.path.exists(cache_file):
-            return None
-        
         try:
+            cache_key = self._get_agent_cache_key(agent_role, debate_topic)
+            cache_file = os.path.join(self.agent_cache_dir, f"{cache_key}.json")
+            
+            if not os.path.exists(cache_file):
+                return None
+            
             with open(cache_file, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
             
@@ -142,10 +159,10 @@ class RAGCache:
     
     def cache_agent_context(self, agent_role: str, debate_topic: str, context: str):
         """缓存专家角色特定的上下文"""
-        cache_key = self._get_agent_cache_key(agent_role, debate_topic)
-        cache_file = os.path.join(self.agent_cache_dir, f"{cache_key}.json")
-        
         try:
+            cache_key = self._get_agent_cache_key(agent_role, debate_topic)
+            cache_file = os.path.join(self.agent_cache_dir, f"{cache_key}.json")
+            
             cache_data = {
                 'timestamp': datetime.now().isoformat(),
                 'agent_role': agent_role,
@@ -168,12 +185,18 @@ class RAGCache:
                 # 清理特定角色的缓存
                 for filename in os.listdir(self.agent_cache_dir):
                     if filename.startswith(f"agent_{agent_role}_"):
-                        os.remove(os.path.join(self.agent_cache_dir, filename))
+                        try:
+                            os.remove(os.path.join(self.agent_cache_dir, filename))
+                        except Exception as e:
+                            print(f"⚠️ 删除缓存文件失败: {filename}, {e}")
                 print(f"✅ 已清理专家 {agent_role} 的缓存")
             else:
                 # 清理所有专家缓存
                 for filename in os.listdir(self.agent_cache_dir):
-                    os.remove(os.path.join(self.agent_cache_dir, filename))
+                    try:
+                        os.remove(os.path.join(self.agent_cache_dir, filename))
+                    except Exception as e:
+                        print(f"⚠️ 删除缓存文件失败: {filename}, {e}")
                 print("✅ 已清理所有专家缓存")
         except Exception as e:
             print(f"❌ 清理缓存失败: {e}")
@@ -203,6 +226,12 @@ class ArxivSearcher:
             
             return self._parse_arxiv_response(response.text)
             
+        except requests.exceptions.Timeout:
+            print("❌ arXiv检索超时")
+            return []
+        except requests.exceptions.RequestException as e:
+            print(f"❌ arXiv检索网络错误: {e}")
+            return []
         except Exception as e:
             print(f"❌ arXiv检索失败: {e}")
             return []
@@ -216,41 +245,48 @@ class ArxivSearcher:
             namespace = {'atom': 'http://www.w3.org/2005/Atom'}
             
             for entry in root.findall('atom:entry', namespace):
-                title = entry.find('atom:title', namespace)
-                title = title.text.strip() if title is not None else "无标题"
-                
-                # 作者信息
-                authors = []
-                for author in entry.findall('atom:author', namespace):
-                    name = author.find('atom:name', namespace)
-                    if name is not None:
-                        authors.append(name.text.strip())
-                
-                # 摘要
-                summary = entry.find('atom:summary', namespace)
-                abstract = summary.text.strip() if summary is not None else "无摘要"
-                
-                # URL
-                link = entry.find('atom:id', namespace)
-                url = link.text.strip() if link is not None else ""
-                
-                # 发布时间
-                published = entry.find('atom:published', namespace)
-                published_date = published.text[:10] if published is not None else ""
-                
-                result = SearchResult(
-                    title=title,
-                    authors=authors,
-                    abstract=abstract,
-                    url=url,
-                    published_date=published_date,
-                    source="arXiv"
-                )
-                
-                results.append(result)
+                try:
+                    title = entry.find('atom:title', namespace)
+                    title = title.text.strip() if title is not None else "无标题"
+                    
+                    # 作者信息
+                    authors = []
+                    for author in entry.findall('atom:author', namespace):
+                        name = author.find('atom:name', namespace)
+                        if name is not None:
+                            authors.append(name.text.strip())
+                    
+                    # 摘要
+                    summary = entry.find('atom:summary', namespace)
+                    abstract = summary.text.strip() if summary is not None else "无摘要"
+                    
+                    # URL
+                    link = entry.find('atom:id', namespace)
+                    url = link.text.strip() if link is not None else ""
+                    
+                    # 发布时间
+                    published = entry.find('atom:published', namespace)
+                    published_date = published.text[:10] if published is not None else ""
+                    
+                    result = SearchResult(
+                        title=title,
+                        authors=authors,
+                        abstract=abstract,
+                        url=url,
+                        published_date=published_date,
+                        source="arXiv"
+                    )
+                    
+                    results.append(result)
+                    
+                except Exception as e:
+                    print(f"⚠️ 解析arXiv条目失败: {e}")
+                    continue
                 
         except ET.ParseError as e:
             print(f"❌ arXiv响应解析错误: {e}")
+        except Exception as e:
+            print(f"❌ arXiv响应处理失败: {e}")
         
         return results
 
@@ -282,6 +318,12 @@ class CrossRefSearcher:
             
             return self._parse_crossref_response(response.json())
             
+        except requests.exceptions.Timeout:
+            print("❌ CrossRef检索超时")
+            return []
+        except requests.exceptions.RequestException as e:
+            print(f"❌ CrossRef检索网络错误: {e}")
+            return []
         except Exception as e:
             print(f"❌ CrossRef检索失败: {e}")
             return []
@@ -294,46 +336,51 @@ class CrossRefSearcher:
             items = data.get('message', {}).get('items', [])
             
             for item in items:
-                # 标题
-                title_list = item.get('title', [])
-                title = title_list[0] if title_list else "无标题"
-                
-                # 作者
-                authors = []
-                author_list = item.get('author', [])
-                for author in author_list:
-                    given = author.get('given', '')
-                    family = author.get('family', '')
-                    if given and family:
-                        authors.append(f"{given} {family}")
-                    elif family:
-                        authors.append(family)
-                
-                # 摘要（CrossRef通常不提供完整摘要）
-                abstract = item.get('abstract', '摘要信息需要访问原文')
-                
-                # URL
-                url = item.get('URL', '')
-                
-                # 发布时间
-                published_date = ""
-                date_parts = item.get('published-print', {}).get('date-parts', [])
-                if date_parts and len(date_parts[0]) >= 3:
-                    year, month, day = date_parts[0][:3]
-                    published_date = f"{year}-{month:02d}-{day:02d}"
-                elif date_parts and len(date_parts[0]) >= 1:
-                    published_date = str(date_parts[0][0])
-                
-                result = SearchResult(
-                    title=title,
-                    authors=authors,
-                    abstract=abstract,
-                    url=url,
-                    published_date=published_date,
-                    source="CrossRef"
-                )
-                
-                results.append(result)
+                try:
+                    # 标题
+                    title_list = item.get('title', [])
+                    title = title_list[0] if title_list else "无标题"
+                    
+                    # 作者
+                    authors = []
+                    author_list = item.get('author', [])
+                    for author in author_list:
+                        given = author.get('given', '')
+                        family = author.get('family', '')
+                        if given and family:
+                            authors.append(f"{given} {family}")
+                        elif family:
+                            authors.append(family)
+                    
+                    # 摘要（CrossRef通常不提供完整摘要）
+                    abstract = item.get('abstract', '摘要信息需要访问原文')
+                    
+                    # URL
+                    url = item.get('URL', '')
+                    
+                    # 发布时间
+                    published_date = ""
+                    date_parts = item.get('published-print', {}).get('date-parts', [])
+                    if date_parts and len(date_parts[0]) >= 3:
+                        year, month, day = date_parts[0][:3]
+                        published_date = f"{year}-{month:02d}-{day:02d}"
+                    elif date_parts and len(date_parts[0]) >= 1:
+                        published_date = str(date_parts[0][0])
+                    
+                    result = SearchResult(
+                        title=title,
+                        authors=authors,
+                        abstract=abstract,
+                        url=url,
+                        published_date=published_date,
+                        source="CrossRef"
+                    )
+                    
+                    results.append(result)
+                    
+                except Exception as e:
+                    print(f"⚠️ 解析CrossRef条目失败: {e}")
+                    continue
                 
         except Exception as e:
             print(f"❌ CrossRef响应解析错误: {e}")
@@ -346,11 +393,11 @@ class RAGEnhancer:
     def __init__(self, llm: ChatDeepSeek):
         self.llm = llm
         self.analysis_prompt = ChatPromptTemplate.from_messages([
-            ("system", """你是一个学术研究分析专家。基于给定的学术论文信息，提取和总结关键发现，为特定角色的辩论提供支撑。
+            ("system", """你是一个学术研究分析专家。基于给定的学术论文信息，提取和总结关键发现，为特定角色的辞论提供支撑。
 
 你的任务：
 1. 分析论文的核心观点和发现
-2. 提取与辩论主题和指定角色相关的关键证据
+2. 提取与辞论主题和指定角色相关的关键证据
 3. 简洁地总结主要论点（2-3句话）
 4. 评估研究的可信度和相关性
 
@@ -362,12 +409,12 @@ class RAGEnhancer:
 发布时间：{published_date}
 来源：{source}
 
-辩论主题：{debate_topic}
+辞论主题：{debate_topic}
 
 请特别关注与{agent_role}专业领域相关的内容，提供：
 1. 关键发现（核心观点和证据）
-2. 与辩论主题的相关性评分（1-10分）
-3. 建议该角色在辩论中如何引用这项研究"""),
+2. 与辞论主题的相关性评分（1-10分）
+3. 建议该角色在辞论中如何引用这项研究"""),
             ("user", "请分析这篇论文并提供关键洞察")
         ])
     
@@ -389,15 +436,27 @@ class RAGEnhancer:
             except Exception as e:
                 print(f"❌ 论文分析失败 {result.title}: {e}")
                 # 即使分析失败也保留原始结果
+                result.key_findings = result.abstract[:150] + "..."
+                result.relevance_score = 5.0
                 enhanced_results.append(result)
         
         # 按相关性评分排序
-        enhanced_results.sort(key=lambda x: x.relevance_score, reverse=True)
+        try:
+            enhanced_results.sort(key=lambda x: x.relevance_score, reverse=True)
+        except Exception as e:
+            print(f"⚠️ 结果排序失败: {e}")
+        
         return enhanced_results
     
     def _analyze_paper(self, result: SearchResult, debate_topic: str, agent_role: str = "") -> dict:
         """分析单篇论文（针对特定角色）"""
         try:
+            if not self.llm:
+                return {
+                    'key_findings': result.abstract[:150] + "...",
+                    'relevance_score': 5.0
+                }
+            
             pipe = self.analysis_prompt | self.llm | StrOutputParser()
             
             response = pipe.invoke({
@@ -440,14 +499,14 @@ class RAGEnhancer:
             }
 
 class DynamicRAGModule:
-    """动态RAG主模块（修复版，支持用户自定义配置）"""
+    """动态RAG主模块（修复版，支持用户自定义配置，增强错误处理）"""
     
     def __init__(self, llm: ChatDeepSeek):
         self.llm = llm
         self.cache = RAGCache()
         self.arxiv_searcher = ArxivSearcher()
         self.crossref_searcher = CrossRefSearcher()
-        self.enhancer = RAGEnhancer(llm)
+        self.enhancer = RAGEnhancer(llm) if llm else None
         
         # 初始化向量存储（可选，用于更复杂的相似性检索）
         try:
@@ -465,7 +524,7 @@ class DynamicRAGModule:
                               max_results_per_source: int = None,
                               agent_role: str = "") -> List[SearchResult]:
         """
-        搜索学术数据源（修复版，支持用户自定义结果数量）
+        搜索学术数据源（修复版，支持用户自定义结果数量，增强错误处理）
         
         Args:
             topic: 搜索主题
@@ -480,37 +539,64 @@ class DynamicRAGModule:
         # 🔧 验证用户配置
         print(f"🔧 RAG检索配置：每源最多{max_results_per_source}篇，角色定制：{agent_role}")
         
+        # 参数安全检查
+        if not topic or not topic.strip():
+            print("⚠️ 搜索主题为空")
+            return []
+        
+        if not sources:
+            print("⚠️ 没有指定数据源")
+            return []
+        
         # 检查缓存
-        cached_results = self.cache.get_cached_results(topic, sources)
-        if cached_results:
-            print(f"✅ 使用缓存结果: {len(cached_results)} 篇论文")
-            # 如果有角色信息，重新排序以适合该角色
-            if agent_role and self.llm:
-                cached_results = self.enhancer.enhance_results(cached_results, topic, agent_role)
-            return cached_results
+        try:
+            cached_results = self.cache.get_cached_results(topic, sources)
+            if cached_results:
+                print(f"✅ 使用缓存结果: {len(cached_results)} 篇论文")
+                # 如果有角色信息，重新排序以适合该角色
+                if agent_role and self.enhancer:
+                    try:
+                        cached_results = self.enhancer.enhance_results(cached_results, topic, agent_role)
+                    except Exception as e:
+                        print(f"⚠️ 缓存结果增强失败: {e}")
+                return cached_results
+        except Exception as e:
+            print(f"⚠️ 缓存检查失败: {e}")
         
         all_results = []
         
         # arXiv检索
         if "arxiv" in sources:
-            arxiv_results = self.arxiv_searcher.search(topic, max_results_per_source)
-            all_results.extend(arxiv_results)
-            print(f"📚 arXiv找到 {len(arxiv_results)} 篇论文（设置上限：{max_results_per_source}篇）")
+            try:
+                arxiv_results = self.arxiv_searcher.search(topic, max_results_per_source)
+                all_results.extend(arxiv_results)
+                print(f"📚 arXiv找到 {len(arxiv_results)} 篇论文（设置上限：{max_results_per_source}篇）")
+            except Exception as e:
+                print(f"❌ arXiv检索出错: {e}")
         
         # CrossRef检索
         if "crossref" in sources:
-            crossref_results = self.crossref_searcher.search(topic, max_results_per_source)
-            all_results.extend(crossref_results)
-            print(f"📚 CrossRef找到 {len(crossref_results)} 篇论文（设置上限：{max_results_per_source}篇）")
+            try:
+                crossref_results = self.crossref_searcher.search(topic, max_results_per_source)
+                all_results.extend(crossref_results)
+                print(f"📚 CrossRef找到 {len(crossref_results)} 篇论文（设置上限：{max_results_per_source}篇）")
+            except Exception as e:
+                print(f"❌ CrossRef检索出错: {e}")
         
         # 使用LLM增强结果（考虑专家角色）
-        if all_results and self.llm:
-            print(f"🤖 使用AI分析论文相关性{'（为' + agent_role + '定制）' if agent_role else ''}...")
-            all_results = self.enhancer.enhance_results(all_results, topic, agent_role)
+        if all_results and self.enhancer:
+            try:
+                print(f"🤖 使用AI分析论文相关性{'（为' + agent_role + '定制）' if agent_role else ''}...")
+                all_results = self.enhancer.enhance_results(all_results, topic, agent_role)
+            except Exception as e:
+                print(f"⚠️ LLM增强失败，使用原始结果: {e}")
         
         # 缓存结果
         if all_results:
-            self.cache.cache_results(topic, sources, all_results)
+            try:
+                self.cache.cache_results(topic, sources, all_results)
+            except Exception as e:
+                print(f"⚠️ 缓存写入失败: {e}")
         
         return all_results
     
@@ -521,11 +607,11 @@ class DynamicRAGModule:
                                  max_results_per_source: int = 2,
                                  force_refresh: bool = False) -> str:
         """
-        为特定角色获取RAG上下文（修复版，完全支持用户自定义配置）
+        为特定角色获取RAG上下文（修复版，完全支持用户自定义配置，增强错误处理）
         
         Args:
             agent_role: 专家角色
-            debate_topic: 辩论主题
+            debate_topic: 辞论主题
             max_sources: 最大参考文献数（来自用户设置）- 🔧 关键修复点
             max_results_per_source: 每个数据源的最大检索数
             force_refresh: 是否强制刷新（忽略缓存）
@@ -534,42 +620,64 @@ class DynamicRAGModule:
         # 🔧 关键验证：确认接收到用户设置
         print(f"🔧 RAG上下文配置确认：专家{agent_role}，最大文献数{max_sources}篇（用户设置），每源{max_results_per_source}篇")
         
+        # 参数安全检查
+        if not agent_role or not debate_topic:
+            print("⚠️ 专家角色或辞论主题为空")
+            return "暂无相关学术资料。"
+        
+        if max_sources <= 0:
+            print("⚠️ 最大文献数设置无效")
+            return "暂无相关学术资料。"
+        
         # 如果不强制刷新，先检查专家缓存
         if not force_refresh:
-            cached_context = self.cache.get_agent_cached_context(agent_role, debate_topic)
-            if cached_context:
-                # 🔧 验证缓存中的文献数量是否符合用户设置
-                cached_ref_count = cached_context.count('参考资料')
-                print(f"📚 使用专家 {agent_role} 的缓存学术资料：{cached_ref_count}篇")
-                
-                # 如果缓存的数量不符合用户当前设置，重新检索
-                if cached_ref_count != max_sources:
-                    print(f"🔄 缓存文献数({cached_ref_count})与用户设置({max_sources})不符，重新检索...")
-                else:
-                    return cached_context
+            try:
+                cached_context = self.cache.get_agent_cached_context(agent_role, debate_topic)
+                if cached_context:
+                    # 🔧 验证缓存中的文献数量是否符合用户设置
+                    cached_ref_count = cached_context.count('参考资料')
+                    print(f"📚 使用专家 {agent_role} 的缓存学术资料：{cached_ref_count}篇")
+                    
+                    # 如果缓存的数量不符合用户当前设置，重新检索
+                    if cached_ref_count != max_sources:
+                        print(f"🔄 缓存文献数({cached_ref_count})与用户设置({max_sources})不符，重新检索...")
+                    else:
+                        return cached_context
+            except Exception as e:
+                print(f"⚠️ 缓存检查失败: {e}")
         
         # 基于角色调整搜索查询
-        role_focused_query = self._create_role_focused_query(agent_role, debate_topic)
+        try:
+            role_focused_query = self._create_role_focused_query(agent_role, debate_topic)
+        except Exception as e:
+            print(f"⚠️ 查询生成失败，使用原始主题: {e}")
+            role_focused_query = debate_topic
         
         # 🔧 关键修复：使用用户设置的数量进行检索
-        results = self.search_academic_sources(
-            role_focused_query, 
-            max_results_per_source=max_results_per_source,  # 每源检索数
-            agent_role=agent_role
-        )
+        try:
+            results = self.search_academic_sources(
+                role_focused_query, 
+                max_results_per_source=max_results_per_source,  # 每源检索数
+                agent_role=agent_role
+            )
+        except Exception as e:
+            print(f"❌ 学术检索失败: {e}")
+            return "学术资料检索遇到技术问题，请基于你的专业知识发表观点。"
         
         if not results:
             context = "暂无相关学术资料。"
         else:
-            # 🔧 关键修复：选择用户设置数量的文献，而不是硬编码
-            top_results = results[:max_sources]  # 使用用户设置！
-            
-            print(f"📊 检索结果处理：为专家 {agent_role} 实际检索到 {len(results)} 篇，按用户设置选择前 {len(top_results)} 篇")
-            
-            # 构建上下文
-            context_parts = []
-            for i, result in enumerate(top_results, 1):
-                context_part = f"""
+            try:
+                # 🔧 关键修复：选择用户设置数量的文献，而不是硬编码
+                top_results = results[:max_sources]  # 使用用户设置！
+                
+                print(f"📊 检索结果处理：为专家 {agent_role} 实际检索到 {len(results)} 篇，按用户设置选择前 {len(top_results)} 篇")
+                
+                # 构建上下文
+                context_parts = []
+                for i, result in enumerate(top_results, 1):
+                    try:
+                        context_part = f"""
 参考资料 {i}:
 标题: {result.title}
 作者: {', '.join(result.authors[:2])}
@@ -577,45 +685,64 @@ class DynamicRAGModule:
 关键发现: {result.key_findings or result.abstract[:200]}
 相关性: {result.relevance_score}/10
 """
-                context_parts.append(context_part.strip())
-            
-            context = "\n\n".join(context_parts)
-            
-            # 🔧 验证最终结果
-            final_ref_count = context.count('参考资料')
-            print(f"✅ 上下文构建完成：{final_ref_count}篇参考文献（用户设置：{max_sources}篇）")
+                        context_parts.append(context_part.strip())
+                    except Exception as e:
+                        print(f"⚠️ 处理第{i}篇文献失败: {e}")
+                        continue
+                
+                context = "\n\n".join(context_parts)
+                
+                # 🔧 验证最终结果
+                final_ref_count = context.count('参考资料')
+                print(f"✅ 上下文构建完成：{final_ref_count}篇参考文献（用户设置：{max_sources}篇）")
+                
+            except Exception as e:
+                print(f"❌ 上下文构建失败: {e}")
+                context = "学术资料处理遇到技术问题，请基于你的专业知识发表观点。"
         
         # 缓存结果
         if context and context != "暂无相关学术资料。":
-            self.cache.cache_agent_context(agent_role, debate_topic, context)
+            try:
+                self.cache.cache_agent_context(agent_role, debate_topic, context)
+            except Exception as e:
+                print(f"⚠️ 上下文缓存失败: {e}")
         
         return context
     
     def _create_role_focused_query(self, agent_role: str, debate_topic: str) -> str:
         """基于角色创建针对性查询"""
-        role_keywords = {
-            "environmentalist": "environment climate sustainability ecology",
-            "economist": "economic cost benefit market analysis",
-            "policy_maker": "policy governance regulation implementation",
-            "tech_expert": "technology innovation technical feasibility",
-            "sociologist": "social impact society community effects",
-            "ethicist": "ethics moral responsibility values"
-        }
-        
-        keywords = role_keywords.get(agent_role, "")
-        focused_query = f"{debate_topic} {keywords}".strip()
-        print(f"🎯 为{agent_role}定制查询：{focused_query}")
-        return focused_query
+        try:
+            role_keywords = {
+                "environmentalist": "environment climate sustainability ecology",
+                "economist": "economic cost benefit market analysis",
+                "policy_maker": "policy governance regulation implementation",
+                "tech_expert": "technology innovation technical feasibility",
+                "sociologist": "social impact society community effects",
+                "ethicist": "ethics moral responsibility values"
+            }
+            
+            keywords = role_keywords.get(agent_role, "")
+            focused_query = f"{debate_topic} {keywords}".strip()
+            print(f"🎯 为{agent_role}定制查询：{focused_query}")
+            return focused_query
+        except Exception as e:
+            print(f"⚠️ 角色查询生成失败: {e}")
+            return debate_topic
     
     def preload_agent_contexts(self, agent_roles: List[str], debate_topic: str, max_refs_per_agent: int = 3):
         """
-        预加载所有专家的上下文（修复版，支持用户配置）
+        预加载所有专家的上下文（修复版，支持用户配置，增强错误处理）
         
         Args:
             agent_roles: 专家角色列表
-            debate_topic: 辩论主题
+            debate_topic: 辞论主题
             max_refs_per_agent: 每个专家的最大参考文献数（用户设置）
         """
+        
+        if not agent_roles or not debate_topic:
+            print("⚠️ 专家角色列表或辞论主题为空")
+            return
+        
         print(f"🚀 开始为 {len(agent_roles)} 位专家预加载学术资料...")
         print(f"📊 用户配置：每专家最多 {max_refs_per_agent} 篇参考文献")
         
@@ -641,6 +768,7 @@ class DynamicRAGModule:
                 
             except Exception as e:
                 print(f"❌ 为专家 {agent_role} 预加载资料失败: {e}")
+                continue
         
         print("✅ 所有专家的学术资料预加载完成")
     
@@ -651,7 +779,10 @@ class DynamicRAGModule:
             # 清理通用缓存
             for filename in os.listdir(self.cache.cache_dir):
                 if filename.endswith('.json') and not filename.startswith('agent_'):
-                    os.remove(os.path.join(self.cache.cache_dir, filename))
+                    try:
+                        os.remove(os.path.join(self.cache.cache_dir, filename))
+                    except Exception as e:
+                        print(f"⚠️ 删除缓存文件失败: {filename}, {e}")
             print("✅ 已清理所有缓存")
         except Exception as e:
             print(f"❌ 清理缓存失败: {e}")
@@ -664,7 +795,7 @@ class DynamicRAGModule:
         
         Args:
             agent_role: 测试专家角色
-            debate_topic: 测试辩论主题  
+            debate_topic: 测试辞论主题  
             test_configs: 测试的参考文献数量列表
         """
         print("🧪 开始测试用户RAG配置支持...")
@@ -673,7 +804,10 @@ class DynamicRAGModule:
             print(f"\n📋 测试配置：每专家{max_refs}篇参考文献")
             
             # 清理缓存确保重新检索
-            self.cache.clear_agent_cache(agent_role)
+            try:
+                self.cache.clear_agent_cache(agent_role)
+            except Exception as e:
+                print(f"⚠️ 缓存清理失败: {e}")
             
             try:
                 context = self.get_rag_context_for_agent(
@@ -704,8 +838,12 @@ rag_module = None
 def initialize_rag_module(llm: ChatDeepSeek) -> DynamicRAGModule:
     """初始化RAG模块"""
     global rag_module
-    rag_module = DynamicRAGModule(llm)
-    return rag_module
+    try:
+        rag_module = DynamicRAGModule(llm)
+        return rag_module
+    except Exception as e:
+        print(f"❌ RAG模块初始化失败: {e}")
+        return None
 
 def get_rag_module() -> Optional[DynamicRAGModule]:
     """获取RAG模块实例"""
@@ -724,6 +862,10 @@ def test_rag_module():
         # 初始化RAG模块
         rag = initialize_rag_module(test_llm)
         
+        if not rag:
+            print("❌ RAG模块初始化失败")
+            return
+        
         # 测试专家角色检索
         test_topic = "artificial intelligence employment impact"
         test_roles = ["tech_expert", "economist", "sociologist"]
@@ -733,23 +875,29 @@ def test_rag_module():
             # 🔧 测试不同的用户配置
             for max_refs in [1, 3, 5]:
                 print(f"\n📊 测试：{role} 获取 {max_refs} 篇文献")
-                context = rag.get_rag_context_for_agent(
-                    agent_role=role, 
-                    debate_topic=test_topic,
-                    max_sources=max_refs,  # 测试用户设置
-                    force_refresh=True
-                )
-                
-                if context and context != "暂无相关学术资料。":
-                    actual_count = context.count('参考资料')
-                    status = "✅" if actual_count == max_refs else "❌"
-                    print(f"{status} 结果：期望{max_refs}篇，实际{actual_count}篇")
-                else:
-                    print("⚠️ 未找到学术资料")
+                try:
+                    context = rag.get_rag_context_for_agent(
+                        agent_role=role, 
+                        debate_topic=test_topic,
+                        max_sources=max_refs,  # 测试用户设置
+                        force_refresh=True
+                    )
+                    
+                    if context and context != "暂无相关学术资料。":
+                        actual_count = context.count('参考资料')
+                        status = "✅" if actual_count == max_refs else "❌"
+                        print(f"{status} 结果：期望{max_refs}篇，实际{actual_count}篇")
+                    else:
+                        print("⚠️ 未找到学术资料")
+                except Exception as e:
+                    print(f"❌ 测试出错: {e}")
         
         # 专门的用户配置测试
         print("\n🔧 专门测试用户配置支持...")
-        rag.test_user_config_support()
+        try:
+            rag.test_user_config_support()
+        except Exception as e:
+            print(f"❌ 配置测试失败: {e}")
             
     except Exception as e:
         print(f"❌ RAG模块测试失败: {e}")
