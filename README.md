@@ -77,6 +77,7 @@
 ├── debates.py        # 主应用文件（Streamlit界面）
 ├── graph.py          # 多智能体辩论逻辑
 ├── rag_module.py     # Kimi联网搜索模块
+├── tts_module.py     # 文本转语音模块
 ├── .env              # 环境变量配置
 ├── requirements.txt  # 主要依赖
 └── README.md         # 项目说明文档
