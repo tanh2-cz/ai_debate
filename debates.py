@@ -53,11 +53,11 @@ def display_agent_message(agent_key, message, agent_info, round_num=None, is_lat
     """, unsafe_allow_html=True)
 
 def display_rag_status(rag_enabled, max_refs_per_agent=3):
-    """显示学术检索状态信息"""
+    """显示联网搜索状态信息"""
     if rag_enabled:
-        st.success(f"🤖 学术检索已启用 | 每专家最多 {max_refs_per_agent} 篇参考文献")
+        st.success(f"🌐 Kimi联网搜索已启用 | 每专家最多 {max_refs_per_agent} 篇参考文献")
     else:
-        st.info("🤖 学术检索已禁用，将基于内置知识辩论")
+        st.info("🌐 联网搜索已禁用，将基于内置知识辩论")
 
 def display_debate_progress(current_round, max_rounds, current_agent_index, total_agents, total_messages):
     """显示辩论进度"""
@@ -97,7 +97,7 @@ def display_debate_summary(key_points, controversial_points):
 
 def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
     """
-    在第一轮开始前为所有专家预加载学术资料
+    在第一轮开始前为所有专家预加载联网搜索资料
     
     Args:
         selected_agents (list): 选中的专家列表
@@ -108,11 +108,11 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
         dict: 预加载结果状态
     """
     if not rag_config.get('enabled', True):
-        return {"success": False, "message": "学术检索未启用"}
+        return {"success": False, "message": "联网搜索未启用"}
     
     rag_module = get_rag_module()
     if not rag_module:
-        return {"success": False, "message": "学术检索模块未初始化"}
+        return {"success": False, "message": "联网搜索模块未初始化"}
     
     max_refs_per_agent = rag_config.get('max_refs_per_agent', 3)
     
@@ -123,7 +123,7 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
         
         total_agents = len(selected_agents)
         
-        st.info(f"🔍 正在为 {total_agents} 位专家检索学术资料...")
+        st.info(f"🔍 正在为 {total_agents} 位专家进行联网搜索...")
         
         preload_results = {}
         
@@ -133,9 +133,9 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
             # 更新进度
             progress = i / total_agents
             preload_progress.progress(progress)
-            preload_status.text(f"🤖 正在为专家 {i}/{total_agents} ({agent_name}) 检索学术资料...")
+            preload_status.text(f"🌐 正在为专家 {i}/{total_agents} ({agent_name}) 进行联网搜索...")
             
-            # 为该专家检索并缓存学术资料
+            # 为该专家进行联网搜索并缓存结果
             context = rag_module.get_rag_context_for_agent(
                 agent_role=agent_key,
                 debate_topic=debate_topic,
@@ -144,7 +144,7 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
                 force_refresh=True
             )
             
-            # 记录检索结果
+            # 记录搜索结果
             if context and context.strip() != "暂无相关学术资料。":
                 actual_ref_count = context.count('参考资料')
                 preload_results[agent_key] = {
@@ -156,7 +156,7 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
                 preload_results[agent_key] = {
                     'success': False,
                     'ref_count': 0,
-                    'context_preview': "未找到相关文献"
+                    'context_preview': "未找到相关资料"
                 }
             
             # 避免API限制
@@ -165,7 +165,7 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
         
         # 完成预加载
         preload_progress.progress(1.0)
-        preload_status.success(f"✅ 所有专家的学术资料预加载完成！")
+        preload_status.success(f"✅ 所有专家的联网搜索资料预加载完成！")
         
         # 显示预加载统计
         success_count = sum(1 for r in preload_results.values() if r['success'])
@@ -174,7 +174,7 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
         with st.expander("📊 预加载详情", expanded=False):
             st.markdown(f"""
             **预加载统计**：
-            - 成功检索专家：{success_count}/{total_agents}
+            - 成功搜索专家：{success_count}/{total_agents}
             - 总参考文献数：{total_refs} 篇
             - 平均每专家：{total_refs/total_agents:.1f} 篇
             """)
@@ -190,7 +190,7 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
         return {"success": True, "message": "预加载完成", "results": preload_results}
         
     except Exception as e:
-        st.error(f"❌ 预加载学术资料失败: {str(e)}")
+        st.error(f"❌ 预加载联网搜索资料失败: {str(e)}")
         return {"success": False, "message": f"预加载失败: {str(e)}"}
 
 def generate_response(input_text, max_rounds, selected_agents, rag_config):
@@ -218,7 +218,7 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
     
     # 提取用户RAG设置
     max_refs_user_set = rag_config.get('max_refs_per_agent', 3)
-    rag_sources = rag_config.get('sources', ['kimi'])
+    rag_sources = rag_config.get('sources', ['web_search'])
     rag_enabled = rag_config.get('enabled', True)
     
     # 动态创建适合当前角色组合的图
@@ -229,7 +229,7 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
         st.error(f"❌ 创建辩论图失败: {str(e)}")
         return
     
-    # 学术检索状态显示
+    # 联网搜索状态显示
     display_rag_status(rag_enabled, max_refs_user_set)
     
     # 显示参与者信息
@@ -248,17 +248,17 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
     
     st.markdown("---")
     
-    # 如果启用学术检索，进行预加载
+    # 如果启用联网搜索，进行预加载
     preload_results = None
     if rag_enabled:
-        st.subheader("🤖 学术资料预加载")
+        st.subheader("🌐 联网搜索资料预加载")
         
         preload_result = preload_rag_for_all_agents(selected_agents, input_text, rag_config)
         preload_results = preload_result.get("results", {})
         
         if not preload_result["success"]:
             st.error(f"❌ 预加载失败: {preload_result['message']}")
-            if st.button("🚀 继续辞论（不使用学术检索）"):
+            if st.button("🚀 继续辞论（不使用联网搜索）"):
                 rag_config['enabled'] = False
                 rag_enabled = False
             else:
@@ -435,7 +435,7 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
         if rag_enabled:
             success_agents = len([r for r in preload_results.values() if r['success']]) if preload_results else 0
             total_refs = sum(r['ref_count'] for r in preload_results.values()) if preload_results else 0
-            st.metric("检索专家", f"{success_agents}/{len(selected_agents)}")
+            st.metric("搜索专家", f"{success_agents}/{len(selected_agents)}")
             st.metric("总参考文献", f"{total_refs} 篇")
     
     with col2:
@@ -463,7 +463,7 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
     # 显示辩论总结
     if rag_enabled:
         st.success("🎉 辩论圆满结束！")
-        st.info("📊 本次辩论采用了连贯性追踪技术和学术检索，提供了权威性的学术支撑和逻辑连贯的讨论！")
+        st.info("📊 本次辩论采用了连贯性追踪技术和Kimi联网搜索，提供了最新的信息支撑和逻辑连贯的讨论！")
 
 # 页面配置
 st.set_page_config(
@@ -525,7 +525,7 @@ st.markdown("""
     <span class="feature-badge">🔄 连贯性追踪</span>
     <span class="feature-badge">📊 争议点分析</span>
     <span class="feature-badge">🎯 历史回顾</span>
-    <span class="feature-badge">🤖 学术检索</span>
+    <span class="feature-badge">🌐 Kimi联网搜索</span>
     <span class="feature-badge">🚀 智能缓存</span>
 </div>
 """, unsafe_allow_html=True)
@@ -534,13 +534,13 @@ st.markdown("""
 with st.sidebar:
     st.header("🎛️ 辩论配置")
     
-    # 学术检索设置区域
-    st.subheader("🤖 学术检索设置")
+    # 联网搜索设置区域
+    st.subheader("🌐 Kimi联网搜索设置")
     
     rag_enabled = st.checkbox(
-        "🔍 启用智能学术检索",
+        "🔍 启用Kimi智能联网搜索",
         value=True,
-        help="为每位专家检索相关学术资料"
+        help="为每位专家进行实时联网搜索相关资料"
     )
     
     if rag_enabled:
@@ -550,13 +550,13 @@ with st.sidebar:
             min_value=1,
             max_value=5,
             value=3,
-            help="设置每个专家在检索中获取的最大学术资料数量"
+            help="设置每个专家在联网搜索中获取的最大资料数量"
         )
         
-        st.success("⚡ 智能检索已启用")
+        st.success("⚡ Kimi联网搜索已启用")
         
         # 缓存管理
-        if st.button("🗑️ 清理缓存", help="清理所有缓存的学术资料"):
+        if st.button("🗑️ 清理缓存", help="清理所有缓存的联网搜索资料"):
             rag_module = get_rag_module()
             if rag_module:
                 rag_module.clear_all_caches()
@@ -564,7 +564,7 @@ with st.sidebar:
             
     else:
         max_refs_per_agent = 0
-        st.warning("⚠️ 禁用学术检索后，专家将仅基于预训练知识发言")
+        st.warning("⚠️ 禁用联网搜索后，专家将仅基于预训练知识发言")
     
     st.markdown("---")
     
@@ -601,7 +601,7 @@ with st.sidebar:
                 st.markdown(f"**关注重点**: {agent['focus']}")
                 st.markdown(f"**典型观点**: {agent['perspective']}")
                 if rag_enabled and agent_key in selected_agents:
-                    st.markdown(f"**专属文献数**: {max_refs_per_agent} 篇")
+                    st.markdown(f"**联网搜索**: {max_refs_per_agent} 篇资料")
 
 # 主要内容区域
 col1, col2 = st.columns([2, 1])
@@ -647,17 +647,17 @@ with col1:
             height=100
         )
     
-    # 学术检索预览功能
+    # 联网搜索预览功能
     if rag_enabled and topic_text and len(topic_text.strip()) > 10:
-        if st.button("🤖 预览学术检索结果", help="提前查看各专家角色的相关学术文献"):
+        if st.button("🌐 预览Kimi联网搜索结果", help="提前查看各专家角色的相关联网搜索资料"):
             if len(selected_agents) >= 3:
-                with st.spinner("正在为各专家角色检索相关学术文献..."):
+                with st.spinner("正在为各专家角色进行Kimi联网搜索..."):
                     try:
                         rag_module = get_rag_module()
                         if rag_module:
                             st.info(f"🔍 预览配置：每专家 {max_refs_per_agent} 篇文献")
                             
-                            # 为每个选中的专家预览检索结果
+                            # 为每个选中的专家预览搜索结果
                             for agent_key in selected_agents[:3]:  # 限制预览前3个角色
                                 agent_name = AVAILABLE_ROLES[agent_key]["name"]
                                 
@@ -671,17 +671,17 @@ with col1:
                                 
                                 if preview_context and preview_context.strip() != "暂无相关学术资料。":
                                     ref_count = preview_context.count('参考资料')
-                                    with st.expander(f"🤖 {agent_name} 的相关文献 ({ref_count} 篇)"):
+                                    with st.expander(f"🌐 {agent_name} 的相关资料 ({ref_count} 篇)"):
                                         st.markdown(preview_context[:500] + "...")
                                 else:
-                                    st.warning(f"⚠️ {agent_name}: 未找到直接相关的学术文献")
+                                    st.warning(f"⚠️ {agent_name}: 未找到直接相关的联网搜索资料")
                                 
                             if len(selected_agents) > 3:
-                                st.info(f"📝 预览显示前3位专家，另外 {len(selected_agents)-3} 位专家的资料将在正式辩论时检索")
+                                st.info(f"📝 预览显示前3位专家，另外 {len(selected_agents)-3} 位专家的资料将在正式辩论时搜索")
                         else:
-                            st.error("学术检索模块未正确初始化")
+                            st.error("联网搜索模块未正确初始化")
                     except Exception as e:
-                        st.error(f"预览检索失败: {e}")
+                        st.error(f"预览搜索失败: {e}")
             else:
                 st.warning("请先选择至少3个专家角色")
 
@@ -703,7 +703,7 @@ with col2:
         base_time = total_messages * 8  # 基础时间
         
         if rag_enabled:
-            # 学术检索时间计算
+            # 联网搜索时间计算
             first_round_time = len(selected_agents) * (15 + max_refs_per_agent * 5)
             later_rounds_time = (total_messages - len(selected_agents)) * 3
             estimated_time = base_time + first_round_time + later_rounds_time
@@ -716,8 +716,8 @@ with col2:
         
         if rag_enabled:
             total_refs = len(selected_agents) * max_refs_per_agent
-            st.success("⚡ 学术检索已启用")
-            st.info(f"总文献数：{total_refs} 篇")
+            st.success("⚡ Kimi联网搜索已启用")
+            st.info(f"总资料数：{total_refs} 篇")
 
 # 辩论控制区域
 st.markdown("---")
@@ -754,7 +754,7 @@ if start_debate and can_start:
     # 构建完整的RAG配置
     rag_config = {
         'enabled': rag_enabled,
-        'sources': ['kimi'] if rag_enabled else [],
+        'sources': ['web_search'] if rag_enabled else [],
         'max_refs_per_agent': max_refs_per_agent if rag_enabled else 0,
         'coherence_level': '最大',  # 默认设置为最大
         'show_history_tracking': True,
@@ -766,7 +766,7 @@ if start_debate and can_start:
     
     feature_list = ["🔄 连贯性追踪", "📊 争议点分析", "🎯 历史回顾"]
     if rag_enabled:
-        feature_list.append(f"🤖 学术检索 (每专家{max_refs_per_agent}篇)")
+        feature_list.append(f"🌐 Kimi联网搜索 (每专家{max_refs_per_agent}篇)")
     
     st.info(f"✨ 启用特性: {' | '.join(feature_list)}")
     
@@ -777,14 +777,14 @@ if start_debate and can_start:
     
     # 辩论结束
     st.balloons()
-    st.success("🎉 辩论圆满结束！各位专家基于连贯性分析和学术研究的精彩论证令人印象深刻！")
+    st.success("🎉 辩论圆满结束！各位专家基于连贯性分析和Kimi联网搜索的精彩论证令人印象深刻！")
 
 # 页脚
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; opacity: 0.7;'>
-    🎭 多角色AI辩论平台 | 连贯性追踪 + 学术检索<br>
-    🔗 Powered by <a href='https://platform.deepseek.com/'>DeepSeek</a> & <a href='https://streamlit.io/'>Streamlit</a><br>
-    🤖 智能技术: 连贯性追踪 + 学术检索 + 智能缓存
+    🎭 多角色AI辩论平台 | 连贯性追踪 + Kimi联网搜索<br>
+    🔗 Powered by <a href='https://platform.deepseek.com/'>DeepSeek</a> & <a href='https://www.moonshot.cn/'>Kimi</a> & <a href='https://streamlit.io/'>Streamlit</a><br>
+    🌐 智能技术: 连贯性追踪 + Kimi联网搜索 + 智能缓存
 </div>
 """, unsafe_allow_html=True)

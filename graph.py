@@ -1,7 +1,7 @@
 """
-多角色AI辩论系统核心逻辑 - 学术API集成版本
-支持3-6个不同角色的智能辩论，基于学术API的学术资料检索
-增强版：强调辩论连贯性和回应性
+多角色AI辩论系统核心逻辑 - Kimi联网搜索集成版本
+支持3-6个不同角色的智能辩论，基于Kimi API的联网搜索功能
+增强版：强调辩论连贯性和回应性，集成实时联网搜索
 """
 
 from typing import TypedDict, Literal, List, Dict, Any
@@ -15,7 +15,7 @@ from langchain_deepseek import ChatDeepSeek
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.types import Command
 
-# 导入基于学术API的RAG模块
+# 导入基于Kimi联网搜索的RAG模块
 from rag_module import initialize_rag_module, get_rag_module, DynamicRAGModule
 
 # 加载环境变量
@@ -25,23 +25,23 @@ load_dotenv(find_dotenv())
 deepseek = None
 rag_module = None
 
-# 初始化DeepSeek模型和基于学术API的RAG模块
+# 初始化DeepSeek模型和基于Kimi联网搜索的RAG模块
 try:
     deepseek = ChatDeepSeek(
         model="deepseek-chat",
         temperature=0.8,        # 稍微提高温度增加观点多样性
-        max_tokens=2000,        # 增加token限制以容纳RAG内容
+        max_tokens=2000,        # 增加token限制以容纳联网搜索内容
         timeout=60,
         max_retries=3,
     )
     print("✅ DeepSeek模型初始化成功")
     
-    # 初始化基于学术API的RAG模块
+    # 初始化基于Kimi联网搜索的RAG模块
     rag_module = initialize_rag_module(deepseek)
     if rag_module:
-        print("✅ 学术检索模块初始化成功")
+        print("✅ Kimi联网搜索模块初始化成功")
     else:
-        print("⚠️ 学术检索模块初始化失败，将使用传统模式")
+        print("⚠️ Kimi联网搜索模块初始化失败，将使用传统模式")
     
 except Exception as e:
     print(f"❌ 模型初始化失败: {e}")
@@ -50,7 +50,7 @@ except Exception as e:
 
 
 class MultiAgentDebateState(MessagesState):
-    """多角色辩论状态管理（支持用户RAG配置）"""
+    """多角色辩论状态管理（支持用户RAG配置和联网搜索）"""
     main_topic: str = "人工智能的发展前景"
     current_round: int = 0              # 当前轮次
     max_rounds: int = 3                 # 最大轮次
@@ -58,7 +58,7 @@ class MultiAgentDebateState(MessagesState):
     current_agent_index: int = 0        # 当前发言Agent索引
     total_messages: int = 0             # 总消息数
     rag_enabled: bool = True            # RAG功能开关
-    rag_sources: List[str] = ["kimi"]   # RAG数据源
+    rag_sources: List[str] = ["web_search"]   # RAG数据源（联网搜索）
     collected_references: List[Dict] = [] # 收集的参考文献
     
     # 用户RAG配置支持
@@ -151,7 +151,7 @@ AVAILABLE_ROLES = {
 }
 
 
-# 增强版多角色辩论提示词模板（强调连贯性和回应性，默认最高级别）
+# 增强版多角色辩论提示词模板（强调连贯性和回应性，集成联网搜索）
 ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE = """
 你是一位{role} - {name}。
 
@@ -169,7 +169,7 @@ ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE = """
 你的发言顺序：第 {agent_position} 位
 参与者：{other_participants}
 
-【基于学术检索的参考资料】
+【基于联网搜索的最新资料】
 {rag_context}
 
 【对话历史与关键争议点】
@@ -203,7 +203,7 @@ ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE = """
 - 明确且详细地回应至少一位其他专家的具体观点
 - 充分体现你的专业特色和角色定位
 - 积极推进辩论向更深层次发展
-- 如引用学术资料，请简洁说明（如"根据最新研究..."）
+- 如引用联网搜索资料，请简洁说明（如"根据最新搜索的研究..."）
 
 现在请基于以上要求发表你在第{current_round}轮的观点：
 """
@@ -361,20 +361,20 @@ def get_other_participants(active_agents: List[str], current_agent: str) -> str:
 
 def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAgentDebateState) -> str:
     """
-    为Agent获取RAG上下文（支持用户设置）
-    第一轮：使用学术检索并缓存论文
-    后续轮次：使用缓存的论文
+    为Agent获取RAG上下文（支持用户设置和联网搜索）
+    第一轮：使用联网搜索并缓存结果
+    后续轮次：使用缓存的搜索结果
     """
     
     # 检查RAG是否启用
     if not state.get("rag_enabled", True) or not rag_module:
-        return "当前未启用学术资料检索功能。"
+        return "当前未启用联网搜索功能。"
     
     # 从状态读取用户设置的参考文献数量
     max_refs_per_agent = state.get("max_refs_per_agent", 3)
     max_results_per_source = state.get("max_results_per_source", 2)
     
-    print(f"🔍 为{AVAILABLE_ROLES[agent_key]['name']}检索学术资料，设置最大文献数为 {max_refs_per_agent} 篇")
+    print(f"🔍 为{AVAILABLE_ROLES[agent_key]['name']}进行联网搜索，设置最大文献数为 {max_refs_per_agent} 篇")
     
     # 检查当前轮次
     current_round = state.get("current_round", 1)
@@ -382,9 +382,9 @@ def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAge
     first_round_rag_completed = state.get("first_round_rag_completed", [])
     
     try:
-        # 如果是第一轮且该专家还未检索过，进行学术检索并缓存
+        # 如果是第一轮且该专家还未搜索过，进行联网搜索并缓存
         if current_round == 1 and agent_key not in first_round_rag_completed:
-            print(f"🔍 第一轮：为{AVAILABLE_ROLES[agent_key]['name']}使用学术检索...")
+            print(f"🔍 第一轮：为{AVAILABLE_ROLES[agent_key]['name']}使用联网搜索...")
             
             # 使用用户设置的数量而不是硬编码
             context = rag_module.get_rag_context_for_agent(
@@ -401,14 +401,14 @@ def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAge
                 first_round_rag_completed.append(agent_key)
                 
                 actual_ref_count = context.count('参考资料')
-                print(f"✅ 学术检索成功：{AVAILABLE_ROLES[agent_key]['name']}获得{actual_ref_count}篇资料")
+                print(f"✅ 联网搜索成功：{AVAILABLE_ROLES[agent_key]['name']}获得{actual_ref_count}篇资料")
                 
                 return context
             else:
-                print(f"⚠️ {AVAILABLE_ROLES[agent_key]['name']}未找到相关学术资料")
-                return "暂未找到直接相关的最新学术研究，请基于你的专业知识发表观点。"
+                print(f"⚠️ {AVAILABLE_ROLES[agent_key]['name']}未找到相关资料")
+                return "暂未找到直接相关的最新信息，请基于你的专业知识发表观点。"
         
-        # 如果不是第一轮或该专家已检索过，使用缓存
+        # 如果不是第一轮或该专家已搜索过，使用缓存
         elif agent_key in agent_paper_cache:
             cached_context = agent_paper_cache[agent_key]
             actual_ref_count = cached_context.count('参考资料')
@@ -417,16 +417,16 @@ def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAge
         
         # 兜底情况
         else:
-            return "暂未找到直接相关的最新学术研究，请基于你的专业知识发表观点。"
+            return "暂未找到直接相关的最新信息，请基于你的专业知识发表观点。"
         
     except Exception as e:
-        print(f"❌ 获取{agent_key}的学术检索上下文失败: {e}")
-        return "学术资料检索遇到技术问题，请基于你的专业知识发表观点。"
+        print(f"❌ 获取{agent_key}的联网搜索上下文失败: {e}")
+        return "联网搜索遇到技术问题，请基于你的专业知识发表观点。"
 
 
 def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Dict[str, Any]:
     """
-    生成指定Agent的回复（增强连贯性版本，默认最高级别）
+    生成指定Agent的回复（增强连贯性版本，集成联网搜索）
     
     Args:
         state: 当前辩论状态
@@ -466,7 +466,7 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
         # 获取该专家之前的立场
         previous_positions = get_agent_previous_positions(state["messages"], state["active_agents"], agent_key)
         
-        # 获取学术检索上下文（支持用户配置）
+        # 获取联网搜索上下文（支持用户配置）
         rag_context = get_rag_context_for_agent(agent_key, state["main_topic"], state)
         
         # 调用模型生成回复
@@ -517,7 +517,7 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
         update_data["key_points_raised"] = updated_key_points
         update_data["controversial_points"] = updated_controversies
         
-        # 如果在第一轮完成了学术检索，更新缓存状态
+        # 如果在第一轮完成了联网搜索，更新缓存状态
         if current_round == 1:
             agent_paper_cache = state.get("agent_paper_cache", {})
             first_round_rag_completed = state.get("first_round_rag_completed", [])
@@ -638,7 +638,7 @@ def create_agent_node_function(agent_key: str):
 
 def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True) -> StateGraph:
     """
-    创建多角色辩论图（增强连贯性版本）
+    创建多角色辩论图（增强连贯性版本，集成联网搜索）
     
     Args:
         active_agents: 活跃Agent列表
@@ -674,7 +674,7 @@ def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True)
     rag_status = "✅ 已启用" if rag_enabled and rag_module else "❌ 未启用"
     print(f"✅ 创建多角色辩论图成功")
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in active_agents]}")
-    print(f"📚 学术检索: {rag_status}")
+    print(f"🌐 联网搜索: {rag_status}")
     print(f"🔄 连贯性增强: 已启用最高级别")
     
     return builder.compile()
@@ -685,14 +685,14 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
                                    agents: List[str] = None,
                                    enable_rag: bool = True,
                                    max_refs_per_agent: int = 3):
-    """测试增强连贯性版多角色辩论功能"""
+    """测试增强连贯性版多角色辩论功能（集成联网搜索）"""
     if agents is None:
         agents = ["tech_expert", "sociologist", "ethicist"]
     
     print(f"🎯 开始测试多角色辩论: {topic}")
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in agents]}")
     print(f"📊 辩论轮数: {rounds}")
-    print(f"📚 学术检索: {'启用' if enable_rag else '禁用'}")
+    print(f"🌐 联网搜索: {'启用' if enable_rag else '禁用'}")
     print(f"📄 每专家文献数: {max_refs_per_agent} 篇")
     print("=" * 70)
     
@@ -709,7 +709,7 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
             "current_agent_index": 0,
             "total_messages": 0,
             "rag_enabled": enable_rag,
-            "rag_sources": ["kimi"],  # 使用学术API作为数据源
+            "rag_sources": ["web_search"],  # 使用联网搜索作为数据源
             "collected_references": [],
             "max_refs_per_agent": max_refs_per_agent,
             "max_results_per_source": 2,
@@ -733,20 +733,20 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
         print(f"❌ 测试过程中出现错误: {e}")
 
 
-# 工具函数：预热学术检索系统
+# 工具函数：预热联网搜索系统
 def warmup_rag_system(test_topic: str = "人工智能"):
-    """预热学术检索系统，测试API连接"""
+    """预热联网搜索系统，测试API连接"""
     if rag_module:
-        print("🔥 预热学术检索系统...")
+        print("🔥 预热联网搜索系统...")
         try:
-            # 测试一个简单的检索请求
+            # 测试一个简单的搜索请求
             test_results = rag_module.search_academic_sources(test_topic, max_results_per_source=1)
             if test_results:
-                print("✅ 学术检索系统预热完成，API连接正常")
+                print("✅ 联网搜索系统预热完成，API连接正常")
             else:
-                print("⚠️ 学术检索系统预热完成，但未检索到测试结果")
+                print("⚠️ 联网搜索系统预热完成，但未搜索到测试结果")
         except Exception as e:
-            print(f"⚠️ 学术检索系统预热失败: {e}")
+            print(f"⚠️ 联网搜索系统预热失败: {e}")
 
 
 # 主程序入口
@@ -766,7 +766,7 @@ if __name__ == "__main__":
     else:
         print("✅ 环境变量配置正确")
         
-        # 预热学术检索系统
+        # 预热联网搜索系统
         warmup_rag_system()
         
         # 测试增强连贯性版辩论
