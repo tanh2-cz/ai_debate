@@ -58,6 +58,7 @@
 
 - **DeepSeek API**：访问 [DeepSeek平台](https://platform.deepseek.com/) 注册获取
 - **Kimi API**：访问 [Moonshot AI](https://www.moonshot.cn/) 注册获取
+- **Siliconflow API**：访问 [硅基流动平台](https://siliconflow.cn/) 注册获取
 
 ### 角色说明
 
