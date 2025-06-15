@@ -76,3 +76,6 @@
 ├── requirements.txt  # 主要依赖
 └── README.md         # 项目说明文档
 ```
+
+## 注意事项
+Kimi API累计充值少于50的账户，每分钟请求限制为3次，如果请求过多可能造成too many requests的报错。

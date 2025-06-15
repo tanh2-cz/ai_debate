@@ -1,12 +1,14 @@
 import streamlit as st
 from graph import AVAILABLE_ROLES, create_multi_agent_graph, warmup_rag_system
 from rag_module import get_rag_module
+from tts_module import initialize_tts_module, get_tts_module
 import time
 import threading
+import base64  # 新增：用于音频数据转换
 
 def display_agent_message(agent_key, message, agent_info, round_num=None, is_latest=False):
     """
-    显示Agent消息
+    显示Agent消息并使用st.audio播放语音（修复版）
     
     Args:
         agent_key (str): Agent标识符
@@ -51,6 +53,41 @@ def display_agent_message(agent_key, message, agent_info, round_num=None, is_lat
         </div>
     </div>
     """, unsafe_allow_html=True)
+    
+    # 生成并显示音频 - 使用st.audio（修复版）
+    tts_module = get_tts_module()
+    if tts_module and st.session_state.get('tts_enabled', True):
+        try:
+            # 生成语音
+            audio_data = tts_module.text_to_speech(message, agent_key)
+            if audio_data:
+                # 将base64数据转换为bytes
+                audio_bytes = base64.b64decode(audio_data)
+                
+                # 创建音频播放区域
+                with st.container():
+                    # 创建两列布局：图标列和音频列
+                    audio_col1, audio_col2 = st.columns([1, 8])
+                    
+                    with audio_col1:
+                        # 显示音频图标，使用角色颜色
+                        st.markdown(f"""
+                        <div style="
+                            color: {color}; 
+                            font-size: 1.2rem; 
+                            text-align: center;
+                            padding-top: 8px;
+                        ">🔊</div>
+                        """, unsafe_allow_html=True)
+                    
+                    with audio_col2:
+                        # 使用streamlit原生音频组件
+                        st.audio(audio_bytes, format="audio/mp3", start_time=0,autoplay=True)
+                
+        except Exception as e:
+            print(f"⚠️ 语音生成失败: {e}")
+            # 显示错误信息（可选）
+            st.caption(f"⚠️ {name}的语音生成失败: {str(e)}")
 
 def display_rag_status(rag_enabled, max_refs_per_agent=3):
     """显示联网搜索状态信息"""
@@ -58,6 +95,13 @@ def display_rag_status(rag_enabled, max_refs_per_agent=3):
         st.success(f"🌐 Kimi联网搜索已启用 | 每专家最多 {max_refs_per_agent} 篇参考文献")
     else:
         st.info("🌐 联网搜索已禁用，将基于内置知识辩论")
+
+def display_tts_status(tts_enabled):
+    """显示TTS状态信息"""
+    if tts_enabled:
+        st.success("🔊 自动语音播放已启用")
+    else:
+        st.info("🔊 语音播放已禁用")
 
 def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
     """
@@ -137,15 +181,44 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
         st.error(f"❌ 预加载联网搜索资料失败: {str(e)}")
         return {"success": False, "message": f"预加载失败: {str(e)}"}
 
-def generate_response(input_text, max_rounds, selected_agents, rag_config):
+def test_audio_functionality():
+    """测试音频功能"""
+    st.subheader("🧪 音频功能测试")
+    
+    if st.button("测试TTS功能"):
+        tts_module = get_tts_module()
+        if tts_module:
+            test_text = "这是一个音频测试，检查语音合成是否正常工作。"
+            
+            with st.spinner("正在生成测试音频..."):
+                try:
+                    audio_data = tts_module.text_to_speech(test_text, "tech_expert")
+                    if audio_data:
+                        st.success("✅ TTS功能正常")
+                        
+                        # 显示测试音频
+                        audio_bytes = base64.b64decode(audio_data)
+                        st.audio(audio_bytes, format="audio/mp3")
+                        st.info("👆 如果能听到声音，说明音频功能正常工作")
+                        
+                    else:
+                        st.error("❌ TTS功能异常")
+                except Exception as e:
+                    st.error(f"❌ TTS测试失败: {e}")
+        else:
+            st.error("❌ TTS模块未初始化")
+            st.info("请检查 SILICONCLOUD_API_KEY 环境变量是否设置")
+
+def generate_response(input_text, max_rounds, selected_agents, rag_config, tts_enabled=True):
     """
-    生成多Agent辩论响应
+    生成多Agent辩论响应（使用st.audio修复版）
     
     Args:
         input_text (str): 辩论主题
         max_rounds (int): 最大辩论轮数
         selected_agents (list): 选中的Agent列表
         rag_config (dict): RAG配置，包含用户的所有设置
+        tts_enabled (bool): 是否启用TTS
     """
     # 验证输入参数
     if not selected_agents:
@@ -160,6 +233,16 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
         st.error("❌ 最多支持6个角色")
         return
     
+    # 初始化TTS模块
+    if tts_enabled:
+        tts_module = get_tts_module()
+        if not tts_module:
+            st.warning("⚠️ TTS模块未初始化，将禁用语音功能")
+            tts_enabled = False
+    
+    # 保存TTS状态到session_state
+    st.session_state['tts_enabled'] = tts_enabled
+    
     # 提取用户RAG设置
     max_refs_user_set = rag_config.get('max_refs_per_agent', 3)
     rag_sources = rag_config.get('sources', ['web_search'])
@@ -173,8 +256,12 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
         st.error(f"❌ 创建辩论图失败: {str(e)}")
         return
     
-    # 联网搜索状态显示
-    display_rag_status(rag_enabled, max_refs_user_set)
+    # 状态显示
+    col1, col2 = st.columns(2)
+    with col1:
+        display_rag_status(rag_enabled, max_refs_user_set)
+    with col2:
+        display_tts_status(tts_enabled)
     
     # 显示参与者信息
     st.subheader("🎭 本轮辩论参与者")
@@ -287,7 +374,7 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
                     message_count += 1
                     current_round = ((message_count - 1) // len(selected_agents)) + 1
                     
-                    # 显示消息
+                    # 显示消息（包含语音）- 使用修复后的函数
                     is_latest = True  # 新消息总是最新的
                     display_agent_message(agent_key, message, agent_info, current_round, is_latest)
                     
@@ -303,7 +390,7 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
                             st.metric("进度", f"{int(progress * 100)}%")
                     
                     # 添加小延迟增强观感
-                    time.sleep(0.8)
+                    time.sleep(1.2)
                     
     except Exception as e:
         st.error(f"辩论过程中出现错误: {str(e)}")
@@ -373,14 +460,42 @@ st.markdown("""
 <h1 class="main-header">🎭 多角色AI辩论平台</h1>
 <div style="text-align: center; margin-bottom: 2rem;">
     <span class="feature-badge">🌐 Kimi联网搜索</span>
+    <span class="feature-badge">🔊 智能语音播放</span>
     <span class="feature-badge">🚀 智能缓存</span>
     <span class="feature-badge">🎯 实时辩论</span>
 </div>
 """, unsafe_allow_html=True)
 
+# 初始化TTS模块
+if 'tts_initialized' not in st.session_state:
+    initialize_tts_module()
+    st.session_state['tts_initialized'] = True
+
 # 侧边栏配置
 with st.sidebar:
     st.header("🎛️ 辩论配置")
+    
+    # TTS设置区域
+    st.subheader("🔊 语音播放设置")
+    
+    tts_enabled = st.checkbox(
+        "🎤 启用自动语音播放",
+        value=True,
+        help="为每条发言自动生成并播放语音"
+    )
+    
+    if tts_enabled:
+        st.success("🔊 语音播放已启用")
+        st.info("💡 每个角色使用不同的声音")
+        st.info("🎵 使用 st.audio 原生组件播放")
+        
+        # 添加音频测试按钮
+        if st.button("🧪 测试音频功能"):
+            st.session_state['show_audio_test'] = True
+    else:
+        st.warning("🔇 语音播放已禁用")
+    
+    st.markdown("---")
     
     # 联网搜索设置区域
     st.subheader("🌐 Kimi联网搜索设置")
@@ -450,6 +565,15 @@ with st.sidebar:
                 st.markdown(f"**典型观点**: {agent['perspective']}")
                 if rag_enabled and agent_key in selected_agents:
                     st.markdown(f"**联网搜索**: {max_refs_per_agent} 篇资料")
+                if tts_enabled:
+                    st.markdown(f"**专属声音**: 已配置")
+
+# 音频测试区域（可选显示）
+if st.session_state.get('show_audio_test', False):
+    test_audio_functionality()
+    if st.button("关闭测试"):
+        st.session_state['show_audio_test'] = False
+    st.markdown("---")
 
 # 主要内容区域
 col1, col2 = st.columns([2, 1])
@@ -518,6 +642,10 @@ with col2:
             total_refs = len(selected_agents) * max_refs_per_agent
             st.success("⚡ Kimi联网搜索已启用")
             st.info(f"总资料数：{total_refs} 篇")
+            
+        if tts_enabled:
+            st.success("🔊 语音播放已启用")
+            st.info(f"预计语音：{total_messages} 条")
 
 # 辩论控制区域
 st.markdown("---")
@@ -564,6 +692,8 @@ if start_debate and can_start:
     feature_list = []
     if rag_enabled:
         feature_list.append(f"🌐 Kimi联网搜索 (每专家{max_refs_per_agent}篇)")
+    if tts_enabled:
+        feature_list.append("🔊 st.audio语音播放")
     
     if feature_list:
         st.info(f"✨ 启用特性: {' | '.join(feature_list)}")
@@ -571,7 +701,7 @@ if start_debate and can_start:
     st.markdown("---")
     
     # 开始辩论
-    generate_response(topic_text, max_rounds, selected_agents, rag_config)
+    generate_response(topic_text, max_rounds, selected_agents, rag_config, tts_enabled)
     
     # 辩论结束
     st.balloons()
@@ -580,7 +710,7 @@ if start_debate and can_start:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; opacity: 0.7;'>
-    🎭 多角色AI辩论平台<br>
-    🔗 Powered by <a href='https://platform.deepseek.com/'>DeepSeek</a> & <a href='https://www.moonshot.cn/'>Kimi</a> & <a href='https://streamlit.io/'>Streamlit</a>
+    🎭 多角色AI辩论平台 - 使用 st.audio 音频播放<br>
+    🔗 Powered by <a href='https://platform.deepseek.com/'>DeepSeek</a> & <a href='https://www.moonshot.cn/'>Kimi</a> & <a href='https://siliconflow.cn/'>SiliconCloud</a> & <a href='https://streamlit.io/'>Streamlit</a>
 </div>
 """, unsafe_allow_html=True)
