@@ -1,8 +1,8 @@
 """
-动态RAG模块 - 基于Kimi API联网搜索的学术文献检索
+动态RAG模块 - 基于Kimi API联网搜索的学术文献检索（简化版）
 使用Kimi API的$web_search工具进行实时联网学术文献检索和分析
 集成JSON Mode功能，获得结构化的搜索结果
-支持基于专家角色的缓存机制和联网搜索
+专注核心搜索功能，简化复杂分析
 """
 
 import os
@@ -220,8 +220,6 @@ class WebSearchTool:
     
     def web_search_impl(self, arguments: Dict[str, Any]) -> Any:
         """实现web_search工具的具体逻辑"""
-        # 在使用Kimi提供的$web_search工具的场合，只需要原封不动返回arguments即可
-        # 不需要额外的处理逻辑
         return arguments
     
     def search_with_web_tool(self, query: str, agent_role: str = "") -> str:
@@ -337,10 +335,10 @@ class WebSearchTool:
                     return None
                 
                 choice = result["choices"][0]
-                finish_reason = choice["finish_reason"]  # 修复：使用字典访问方式
+                finish_reason = choice["finish_reason"]
                 
                 # 添加助手回复到消息历史
-                messages.append(choice["message"])  # 修复：使用字典访问方式
+                messages.append(choice["message"])
                 
                 # 判断当前返回内容是否包含tool_calls
                 if finish_reason == "tool_calls":
@@ -351,15 +349,11 @@ class WebSearchTool:
                         tool_call_arguments = json.loads(tool_call["function"]["arguments"])
                         
                         if tool_call_name == "$web_search":
-                            # 使用联网搜索过程中，由Kimi大模型根据联网搜索结果生成的Tokens打印出来
-                            search_content_total_tokens = tool_call_arguments.get("usage", {}).get("total_tokens", 0)
-                            print(f"search_content_total_tokens: {search_content_total_tokens}")
-                            
                             tool_result = self.web_search_impl(tool_call_arguments)
                         else:
                             tool_result = f"Error: unable to find tool by name '{tool_call_name}'"
                         
-                        # 使用函数执行结果构造一个 role=tool 的 message，以此来向模型展示工具调用的结果
+                        # 使用函数执行结果构造一个 role=tool 的 message
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call["id"],
@@ -369,7 +363,7 @@ class WebSearchTool:
                 
                 # 如果finish_reason不是tool_calls，说明模型已完成响应
                 if finish_reason != "tool_calls":
-                    return choice["message"]["content"]  # 修复：使用字典访问方式
+                    return choice["message"]["content"]
             
             return None
                 
@@ -468,67 +462,18 @@ class AcademicSearcher:
         results = []
         
         try:
-            # 简单的文本分段和信息提取
-            sentences = response.split('。')
-            current_title = ""
-            current_content = ""
-            
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if not sentence:
-                    continue
-                
-                # 简单的标题识别
-                if len(sentence) < 100 and ('研究' in sentence or '论文' in sentence or '报告' in sentence):
-                    if current_title and current_content:
-                        # 保存前一个结果
-                        result = SearchResult(
-                            title=current_title,
-                            authors=["联网搜索获取"],
-                            abstract=current_content[:200],
-                            url="通过联网搜索获得",
-                            published_date=datetime.now().strftime('%Y-%m-%d'),
-                            source="联网搜索",
-                            relevance_score=6.0,
-                            key_findings=current_content[:150]
-                        )
-                        results.append(result)
-                        
-                        if len(results) >= max_results:
-                            break
-                    
-                    current_title = sentence
-                    current_content = ""
-                else:
-                    current_content += sentence + "。"
-            
-            # 处理最后一个
-            if current_title and current_content and len(results) < max_results:
-                result = SearchResult(
-                    title=current_title,
-                    authors=["联网搜索获取"],
-                    abstract=current_content[:200],
-                    url="通过联网搜索获得",
-                    published_date=datetime.now().strftime('%Y-%m-%d'),
-                    source="联网搜索",
-                    relevance_score=6.0,
-                    key_findings=current_content[:150]
-                )
-                results.append(result)
-            
-            # 如果还是没有结果，创建一个包含原始响应的结果
-            if not results:
-                result = SearchResult(
-                    title=f"关于{query}的联网搜索结果",
-                    authors=["联网搜索获取"],
-                    abstract=response[:300],
-                    url="通过联网搜索获得",
-                    published_date=datetime.now().strftime('%Y-%m-%d'),
-                    source="联网搜索",
-                    relevance_score=5.0,
-                    key_findings=response[:200]
-                )
-                results.append(result)
+            # 如果没有结果，创建一个包含原始响应的结果
+            result = SearchResult(
+                title=f"关于{query}的联网搜索结果",
+                authors=["联网搜索获取"],
+                abstract=response[:300],
+                url="通过联网搜索获得",
+                published_date=datetime.now().strftime('%Y-%m-%d'),
+                source="联网搜索",
+                relevance_score=5.0,
+                key_findings=response[:200]
+            )
+            results.append(result)
             
             return results
             
@@ -536,137 +481,15 @@ class AcademicSearcher:
             print(f"❌ 备用文本提取失败: {e}")
             return []
 
-class RAGEnhancer:
-    """RAG增强器 - 处理检索结果并生成洞察"""
-    
-    def __init__(self, llm: ChatDeepSeek):
-        self.llm = llm
-        self.analysis_prompt = ChatPromptTemplate.from_messages([
-            ("system", """你是一个学术研究分析专家。基于给定的联网搜索结果，提取和总结关键发现，为特定角色的辩论提供支撑。
-
-你的任务：
-1. 分析搜索结果的核心观点和发现
-2. 提取与辩论主题和指定角色相关的关键证据
-3. 简洁地总结主要论点（2-3句话）
-4. 评估信息的可信度和相关性
-
-专家角色：{agent_role}
-搜索结果信息：
-标题：{title}
-来源：{source}
-核心内容：{abstract}
-主要发现：{key_findings}
-发布时间：{published_date}
-
-辩论主题：{debate_topic}
-
-请特别关注与{agent_role}专业领域相关的内容，提供：
-1. 关键发现（核心观点和证据）
-2. 与辩论主题的相关性评分（1-10分）
-3. 建议该角色在辩论中如何引用这项信息"""),
-            ("user", "请基于搜索结果分析并提供关键洞察")
-        ])
-    
-    def enhance_results(self, results: List[SearchResult], debate_topic: str, agent_role: str = "") -> List[SearchResult]:
-        """增强检索结果，提取关键洞察（针对特定角色优化）"""
-        enhanced_results = []
-        
-        for result in results:
-            try:
-                # 如果结果已经有key_findings，可以用LLM进一步分析
-                if self.llm and result.key_findings:
-                    analysis = self._analyze_result(result, debate_topic, agent_role)
-                    if analysis.get('enhanced_findings'):
-                        result.key_findings = analysis['enhanced_findings']
-                    if analysis.get('relevance_score'):
-                        result.relevance_score = analysis['relevance_score']
-                
-                enhanced_results.append(result)
-                
-                # 避免API限制
-                time.sleep(1)
-                
-            except Exception as e:
-                print(f"❌ 搜索结果分析失败 {result.title}: {e}")
-                # 即使分析失败也保留原始结果
-                enhanced_results.append(result)
-        
-        # 按相关性评分排序
-        try:
-            enhanced_results.sort(key=lambda x: x.relevance_score, reverse=True)
-        except Exception as e:
-            print(f"⚠️ 结果排序失败: {e}")
-        
-        return enhanced_results
-    
-    def _analyze_result(self, result: SearchResult, debate_topic: str, agent_role: str = "") -> dict:
-        """分析单个搜索结果（针对特定角色）"""
-        try:
-            if not self.llm:
-                return {
-                    'enhanced_findings': result.key_findings,
-                    'relevance_score': result.relevance_score or 5.0
-                }
-            
-            pipe = self.analysis_prompt | self.llm | StrOutputParser()
-            
-            response = pipe.invoke({
-                'agent_role': agent_role,
-                'title': result.title,
-                'source': result.source,
-                'abstract': result.abstract[:1000],
-                'key_findings': result.key_findings[:500] if result.key_findings else "",
-                'published_date': result.published_date,
-                'debate_topic': debate_topic
-            })
-            
-            # 简单解析响应
-            lines = response.strip().split('\n')
-            enhanced_findings = ""
-            relevance_score = result.relevance_score or 5.0
-            
-            for line in lines:
-                if '关键发现' in line or '核心观点' in line:
-                    enhanced_findings = line.split('：', 1)[-1].strip()
-                elif '相关性' in line and '分' in line:
-                    try:
-                        import re
-                        score_match = re.search(r'(\d+)', line)
-                        if score_match:
-                            relevance_score = float(score_match.group(1))
-                    except:
-                        pass
-            
-            return {
-                'enhanced_findings': enhanced_findings or response[:200],
-                'relevance_score': min(max(relevance_score, 1.0), 10.0)
-            }
-            
-        except Exception as e:
-            print(f"❌ LLM分析错误: {e}")
-            return {
-                'enhanced_findings': result.key_findings,
-                'relevance_score': result.relevance_score or 5.0
-            }
-
 class DynamicRAGModule:
-    """动态RAG主模块（基于Kimi API联网搜索的学术文献检索，集成JSON Mode）"""
+    """动态RAG主模块（基于Kimi API联网搜索的学术文献检索，简化版）"""
     
     def __init__(self, llm: ChatDeepSeek):
         self.llm = llm
         self.cache = RAGCache()
         self.academic_searcher = AcademicSearcher()
-        self.enhancer = RAGEnhancer(llm) if llm else None
         
-        # 初始化向量存储（可选，用于更复杂的相似性检索）
-        try:
-            self.embeddings = HuggingFaceEmbeddings(
-                model_name=RAG_CONFIG["embedding_model"]
-            )
-            print("✅ 嵌入模型加载成功")
-        except Exception as e:
-            print(f"⚠️ 嵌入模型加载失败: {e}")
-            self.embeddings = None
+        print("✅ 简化版RAG模块初始化成功")
     
     def search_academic_sources(self, 
                               topic: str, 
@@ -675,12 +498,6 @@ class DynamicRAGModule:
                               agent_role: str = "") -> List[SearchResult]:
         """
         搜索学术数据源（使用联网搜索，集成JSON Mode）
-        
-        Args:
-            topic: 搜索主题
-            sources: 数据源列表
-            max_results_per_source: 每个数据源的最大结果数（用户可配置）
-            agent_role: 专家角色（用于定制化分析）
         """
         
         if max_results_per_source is None:
@@ -701,12 +518,6 @@ class DynamicRAGModule:
             cached_results = self.cache.get_cached_results(topic, sources)
             if cached_results:
                 print(f"✅ 使用缓存结果: {len(cached_results)} 篇文献")
-                # 如果有角色信息，重新排序以适合该角色
-                if agent_role and self.enhancer:
-                    try:
-                        cached_results = self.enhancer.enhance_results(cached_results, topic, agent_role)
-                    except Exception as e:
-                        print(f"⚠️ 缓存结果增强失败: {e}")
                 return cached_results
         except Exception as e:
             print(f"⚠️ 缓存检查失败: {e}")
@@ -714,22 +525,14 @@ class DynamicRAGModule:
         all_results = []
         
         # 联网搜索 (JSON Mode)
-        if "web_search" in sources or "kimi" in sources:  # 兼容旧的标识
+        if "web_search" in sources or "kimi" in sources:
             try:
                 search_results = self.academic_searcher.search(topic, max_results_per_source, agent_role)
                 all_results.extend(search_results)
-                print(f"🌐 JSON Mode联网搜索找到 {len(search_results)} 篇文献（设置上限：{max_results_per_source}篇）")
+                print(f"🌐 JSON Mode联网搜索找到 {len(search_results)} 篇文献")
                 
             except Exception as e:
                 print(f"❌ JSON Mode联网搜索出错: {e}")
-        
-        # 使用LLM增强结果（考虑专家角色）
-        if all_results and self.enhancer:
-            try:
-                print(f"🤖 使用AI分析搜索相关性{'（为' + agent_role + '定制）' if agent_role else ''}...")
-                all_results = self.enhancer.enhance_results(all_results, topic, agent_role)
-            except Exception as e:
-                print(f"⚠️ LLM增强失败，使用原始结果: {e}")
         
         # 缓存结果
         if all_results:
@@ -749,13 +552,6 @@ class DynamicRAGModule:
                                  force_refresh: bool = False) -> str:
         """
         为特定角色获取基于联网搜索的RAG上下文 (JSON Mode)
-        
-        Args:
-            agent_role: 专家角色
-            debate_topic: 辩论主题
-            max_sources: 最大参考文献数（来自用户设置）
-            max_results_per_source: 每个数据源的最大检索数
-            force_refresh: 是否强制刷新（忽略缓存）
         """
         
         print(f"🔍 为专家{agent_role}JSON Mode联网搜索学术资料，最大文献数{max_sources}篇")
@@ -796,8 +592,8 @@ class DynamicRAGModule:
         try:
             results = self.search_academic_sources(
                 role_focused_query, 
-                sources=["web_search"],  # 使用联网搜索作为数据源
-                max_results_per_source=max_sources,  # 直接使用用户设置
+                sources=["web_search"],
+                max_results_per_source=max_sources,
                 agent_role=agent_role
             )
         except Exception as e:
@@ -869,49 +665,6 @@ class DynamicRAGModule:
             print(f"⚠️ 角色查询生成失败: {e}")
             return debate_topic
     
-    def preload_agent_contexts(self, agent_roles: List[str], debate_topic: str, max_refs_per_agent: int = 3):
-        """
-        预加载所有专家的联网搜索上下文 (JSON Mode)
-        
-        Args:
-            agent_roles: 专家角色列表
-            debate_topic: 辩论主题
-            max_refs_per_agent: 每个专家的最大参考文献数（用户设置）
-        """
-        
-        if not agent_roles or not debate_topic:
-            print("⚠️ 专家角色列表或辩论主题为空")
-            return
-        
-        print(f"🚀 开始为 {len(agent_roles)} 位专家预加载JSON Mode联网搜索资料...")
-        print(f"📊 用户配置：每专家最多 {max_refs_per_agent} 篇参考文献")
-        
-        for agent_role in agent_roles:
-            try:
-                print(f"🔍 为专家 {agent_role} 使用JSON Mode联网搜索...")
-                context = self.get_rag_context_for_agent(
-                    agent_role=agent_role,
-                    debate_topic=debate_topic,
-                    max_sources=max_refs_per_agent,  # 使用用户设置
-                    max_results_per_source=2,
-                    force_refresh=True  # 强制刷新确保最新资料
-                )
-                
-                if context and context != "暂无相关学术资料。":
-                    actual_count = context.count('参考资料')
-                    print(f"✅ 专家 {agent_role} 的JSON Mode联网搜索资料已准备就绪：{actual_count}篇")
-                else:
-                    print(f"⚠️ 专家 {agent_role} 未找到相关资料")
-                
-                # 避免API限制
-                time.sleep(3)
-                
-            except Exception as e:
-                print(f"❌ 为专家 {agent_role} 预加载资料失败: {e}")
-                continue
-        
-        print("✅ 所有专家的JSON Mode联网搜索资料预加载完成")
-    
     def clear_all_caches(self):
         """清理所有缓存"""
         try:
@@ -926,78 +679,29 @@ class DynamicRAGModule:
             print("✅ 已清理所有缓存")
         except Exception as e:
             print(f"❌ 清理缓存失败: {e}")
-    
-    def test_integration(self, 
-                        agent_role: str = "tech_expert", 
-                        debate_topic: str = "人工智能对教育的影响",
-                        test_configs: List[int] = [1, 3, 5]):
-        """
-        测试JSON Mode联网搜索集成
-        
-        Args:
-            agent_role: 测试专家角色
-            debate_topic: 测试辩论主题  
-            test_configs: 测试的参考文献数量列表
-        """
-        print("🧪 开始测试Kimi JSON Mode联网搜索集成...")
-        
-        for max_refs in test_configs:
-            print(f"\n📋 测试配置：每专家{max_refs}篇参考文献")
-            
-            # 清理缓存确保重新检索
-            try:
-                self.cache.clear_agent_cache(agent_role)
-            except Exception as e:
-                print(f"⚠️ 缓存清理失败: {e}")
-            
-            try:
-                context = self.get_rag_context_for_agent(
-                    agent_role=agent_role,
-                    debate_topic=debate_topic,
-                    max_sources=max_refs,  # 测试用户设置
-                    force_refresh=True
-                )
-                
-                if context and context != "暂无相关学术资料。":
-                    actual_count = context.count('参考资料')
-                    status = "✅" if actual_count == max_refs else "❌"
-                    print(f"{status} 结果：实际{actual_count}篇，期望{max_refs}篇")
-                    
-                    if actual_count != max_refs:
-                        print(f"⚠️ 配置不生效！请检查代码")
-                    
-                    # 显示简短内容预览
-                    print(f"📄 内容预览：{context[:200]}...")
-                else:
-                    print(f"⚠️ 未找到学术资料")
-                    
-            except Exception as e:
-                print(f"❌ 测试失败: {e}")
-        
-        print("\n🎉 Kimi JSON Mode联网搜索测试完成！")
 
 # 全局RAG实例（将在graph.py中初始化）
 rag_module = None
 
 def initialize_rag_module(llm: ChatDeepSeek) -> DynamicRAGModule:
-    """初始化RAG模块（基于Kimi API联网搜索，集成JSON Mode）"""
+    """初始化RAG模块（基于Kimi API联网搜索，简化版）"""
     global rag_module
     try:
         rag_module = DynamicRAGModule(llm)
-        print("🔍 RAG模块已初始化，使用Kimi API联网搜索功能 (JSON Mode)")
+        print("🔍 简化版RAG模块已初始化，使用Kimi API联网搜索功能")
         return rag_module
     except Exception as e:
-        print(f"❌ JSON Mode联网搜索RAG模块初始化失败: {e}")
+        print(f"❌ 简化版RAG模块初始化失败: {e}")
         return None
 
 def get_rag_module() -> Optional[DynamicRAGModule]:
     """获取RAG模块实例"""
     return rag_module
 
-# 测试函数
+# 简化版测试函数
 def test_rag_module():
-    """测试基于Kimi JSON Mode联网搜索的RAG模块功能"""
-    print("🧪 开始测试基于Kimi JSON Mode联网搜索的RAG模块...")
+    """测试基于Kimi JSON Mode联网搜索的RAG模块功能（简化版）"""
+    print("🧪 开始测试基于Kimi JSON Mode联网搜索的RAG模块（简化版）...")
     
     # 检查环境变量
     if not os.getenv("KIMI_API_KEY"):
@@ -1005,7 +709,6 @@ def test_rag_module():
         print("请设置环境变量：export KIMI_API_KEY=your_api_key")
         return
     
-    # 创建测试LLM（需要有效的API密钥）
     try:
         from langchain_deepseek import ChatDeepSeek
         test_llm = ChatDeepSeek(model="deepseek-chat", temperature=0.3)
@@ -1014,45 +717,33 @@ def test_rag_module():
         rag = initialize_rag_module(test_llm)
         
         if not rag:
-            print("❌ JSON Mode联网搜索RAG模块初始化失败")
+            print("❌ 简化版RAG模块初始化失败")
             return
         
-        # 测试专家角色联网搜索
+        # 简单测试
         test_topic = "人工智能对就业的影响"
-        test_roles = ["tech_expert", "economist", "sociologist"]
+        test_role = "tech_expert"
         
-        print("🔍 测试基于Kimi JSON Mode联网搜索的专家角色文献检索...")
-        for role in test_roles:
-            # 测试不同的用户配置
-            for max_refs in [1, 3]:
-                print(f"\n📊 测试：{role} 获取 {max_refs} 篇文献")
-                try:
-                    context = rag.get_rag_context_for_agent(
-                        agent_role=role, 
-                        debate_topic=test_topic,
-                        max_sources=max_refs,  # 测试用户设置
-                        force_refresh=True
-                    )
-                    
-                    if context and context != "暂无相关学术资料。":
-                        actual_count = context.count('参考资料')
-                        status = "✅" if actual_count == max_refs else "❌"
-                        print(f"{status} 结果：期望{max_refs}篇，实际{actual_count}篇")
-                        print(f"前100字符：{context[:100]}...")
-                    else:
-                        print("⚠️ 未找到学术资料")
-                except Exception as e:
-                    print(f"❌ 测试出错: {e}")
-        
-        # 专门的JSON Mode联网搜索测试
-        print("\n🔧 专门测试JSON Mode联网搜索功能...")
+        print(f"🔍 测试专家角色文献检索：{test_role}")
         try:
-            rag.test_integration()
+            context = rag.get_rag_context_for_agent(
+                agent_role=test_role, 
+                debate_topic=test_topic,
+                max_sources=2,
+                force_refresh=True
+            )
+            
+            if context and context != "暂无相关学术资料。":
+                ref_count = context.count('参考资料')
+                print(f"✅ 测试成功：获得{ref_count}篇文献")
+                print(f"前100字符：{context[:100]}...")
+            else:
+                print("⚠️ 未找到学术资料")
         except Exception as e:
-            print(f"❌ JSON Mode联网搜索测试失败: {e}")
+            print(f"❌ 测试出错: {e}")
             
     except Exception as e:
-        print(f"❌ JSON Mode联网搜索RAG模块测试失败: {e}")
+        print(f"❌ 简化版RAG模块测试失败: {e}")
 
 if __name__ == "__main__":
     test_rag_module()

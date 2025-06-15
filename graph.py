@@ -1,7 +1,7 @@
 """
-多角色AI辩论系统核心逻辑 - Kimi联网搜索集成版本
+多角色AI辩论系统核心逻辑 - Kimi联网搜索集成版本（简化版）
 支持3-6个不同角色的智能辩论，基于Kimi API的联网搜索功能
-增强版：强调辩论连贯性和回应性，集成实时联网搜索
+简化版：专注核心辩论功能，移除复杂分析
 """
 
 from typing import TypedDict, Literal, List, Dict, Any
@@ -50,7 +50,7 @@ except Exception as e:
 
 
 class MultiAgentDebateState(MessagesState):
-    """多角色辩论状态管理（支持用户RAG配置和联网搜索）"""
+    """多角色辩论状态管理（简化版）"""
     main_topic: str = "人工智能的发展前景"
     current_round: int = 0              # 当前轮次
     max_rounds: int = 3                 # 最大轮次
@@ -69,10 +69,10 @@ class MultiAgentDebateState(MessagesState):
     agent_paper_cache: Dict[str, str] = {}  # 格式: {agent_key: rag_context}
     first_round_rag_completed: List[str] = []  # 已完成第一轮RAG检索的专家列表
     
-    # 增强辩论连贯性的新字段（默认最高级别）
-    agent_positions: Dict[str, List[str]] = {}  # 每个专家在各轮的立场记录
-    key_points_raised: List[str] = []  # 已提出的关键论点
-    controversial_points: List[str] = []  # 存在争议的观点
+    # 简化的状态字段
+    agent_positions: Dict[str, List[str]] = {}  # 基本的专家立场记录
+    key_points_raised: List[str] = []  # 基本的关键论点
+    controversial_points: List[str] = []  # 基本的争议观点
 
 
 # 定义所有可用的角色
@@ -151,8 +151,8 @@ AVAILABLE_ROLES = {
 }
 
 
-# 增强版多角色辩论提示词模板（强调连贯性和回应性，集成联网搜索）
-ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE = """
+# 简化版多角色辩论提示词模板
+SIMPLIFIED_MULTI_AGENT_DEBATE_TEMPLATE = """
 你是一位{role} - {name}。
 
 【角色背景】
@@ -172,78 +172,53 @@ ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE = """
 【基于联网搜索的最新资料】
 {rag_context}
 
-【对话历史与关键争议点】
+【对话历史】
 {history}
 
-【关键争议点追踪】
-已提出的主要论点：{key_points}
-存在争议的观点：{controversial_points}
-你之前的立场：{your_previous_positions}
+【发言要求】
+请基于你的专业角色，针对辩论主题发表观点：
 
-【连贯性发言要求（最高级别）】
-🎯 **第{current_round}轮发言重点**：
-1. **详细回应前轮内容**：针对前面发言者的具体观点进行深入回应或反驳
-2. **深度发展你的论证**：基于你在前几轮的立场，进一步深化或完善你的观点
-3. **积极寻找争议点**：从你的专业角度主动识别和挑战其他专家的观点
-4. **建设性深度辩论**：既要坚持自己的立场，也要承认对方合理的部分，并提出更深层次的观点
-
-🔄 **严格避免重复**：
-- 绝对不要重复你在前几轮已经表达过的观点
-- 避免使用与前轮相同的论证逻辑
-- 如需重申立场，必须用全新的角度或证据
-
-💡 **发言策略（最高连贯性级别）**：
-- 如果是第1轮：阐述你的基本立场和核心关切
-- 如果是第2轮及以后：必须详细回应其他专家的观点，并深化你的论证
-- 积极寻找与其他专家的分歧点，提出针对性的反驳
-- 提出综合性解决方案时要展现专业深度
+1. **第一轮**：阐述你的基本立场和核心关切
+2. **后续轮次**：回应其他专家的观点，并深化你的论证
+3. **保持专业特色**：充分体现你的专业背景和视角
+4. **适当引用资料**：如有联网搜索资料，可简洁引用
 
 【发言格式】
-请直接发表你的观点，无需加名字前缀。控制在3-4句话内，确保：
-- 明确且详细地回应至少一位其他专家的具体观点
-- 充分体现你的专业特色和角色定位
-- 积极推进辩论向更深层次发展
-- 如引用联网搜索资料，请简洁说明（如"根据最新搜索的研究..."）
+请直接发表你的观点，无需加名字前缀。控制在3-4句话内，确保观点明确且具有专业深度。
 
 现在请基于以上要求发表你在第{current_round}轮的观点：
 """
 
 
-def create_enhanced_chat_template():
-    """创建增强版聊天模板"""
+def create_simplified_chat_template():
+    """创建简化版聊天模板"""
     return ChatPromptTemplate.from_messages([
-        ("system", ENHANCED_MULTI_AGENT_DEBATE_TEMPLATE),
-        ("user", "请基于以上背景发表你的专业观点，注意保持辩论的最高级别连贯性"),
+        ("system", SIMPLIFIED_MULTI_AGENT_DEBATE_TEMPLATE),
+        ("user", "请基于以上背景发表你的专业观点"),
     ])
 
 
 def format_agent_history(messages: List, active_agents: List[str], current_agent: str, current_round: int) -> str:
-    """格式化对话历史，突出上一轮的核心观点"""
+    """格式化对话历史（简化版）"""
     if not messages:
         return "这是辩论的开始，你是本轮第一个发言的人。请阐述你的基本立场。"
     
     formatted_history = []
     
-    # 计算要显示的消息范围（优先显示最近的轮次）
+    # 显示最近的消息（最多显示上一轮和本轮）
     messages_per_round = len(active_agents)
     if len(messages) <= messages_per_round:
-        # 只有一轮，显示全部
         start_idx = 0
     else:
-        # 显示上一轮的所有发言和本轮已有的发言
-        start_idx = max(0, len(messages) - messages_per_round * 2)
+        start_idx = max(0, len(messages) - messages_per_round)
     
     recent_messages = messages[start_idx:]
     
     for i, message in enumerate(recent_messages):
-        # 确定发言者
         global_msg_idx = start_idx + i
         agent_index = global_msg_idx % len(active_agents)
         agent_key = active_agents[agent_index]
         agent_name = AVAILABLE_ROLES[agent_key]["name"]
-        
-        # 计算这条消息属于哪一轮
-        msg_round = (global_msg_idx // len(active_agents)) + 1
         
         # 获取消息内容
         if hasattr(message, 'content'):
@@ -255,98 +230,9 @@ def format_agent_history(messages: List, active_agents: List[str], current_agent
         
         # 清理消息内容
         clean_message = message_content.replace(f"{agent_name}:", "").strip()
-        
-        # 标记轮次信息
-        round_label = f"第{msg_round}轮" if msg_round < current_round else "本轮"
-        formatted_history.append(f"[{round_label}] {agent_name}: {clean_message}")
+        formatted_history.append(f"{agent_name}: {clean_message}")
     
-    # 如果当前专家在之前轮次有发言，特别标注
-    your_previous_messages = []
-    for i, message in enumerate(messages):
-        agent_index = i % len(active_agents)
-        agent_key = active_agents[agent_index]
-        if agent_key == current_agent:
-            msg_round = (i // len(active_agents)) + 1
-            if msg_round < current_round:
-                if hasattr(message, 'content'):
-                    content = message.content
-                else:
-                    content = str(message)
-                clean_content = content.replace(f"{AVAILABLE_ROLES[current_agent]['name']}:", "").strip()
-                your_previous_messages.append(f"第{msg_round}轮: {clean_content}")
-    
-    result = "\n".join(formatted_history)
-    if your_previous_messages:
-        result += f"\n\n[你的历史立场]\n" + "\n".join(your_previous_messages)
-    
-    return result
-
-
-def extract_key_points_and_controversies(messages: List, active_agents: List[str]) -> tuple:
-    """提取关键论点和争议点"""
-    key_points = []
-    controversial_points = []
-    
-    if len(messages) < 2:
-        return [], []
-    
-    # 简单的关键词提取和争议点识别
-    keywords_by_agent = {}
-    
-    for i, message in enumerate(messages):
-        agent_index = i % len(active_agents)
-        agent_key = active_agents[agent_index]
-        agent_name = AVAILABLE_ROLES[agent_key]["name"]
-        
-        if hasattr(message, 'content'):
-            content = message.content.lower()
-        else:
-            content = str(message).lower()
-        
-        # 识别关键观点标志词
-        opinion_markers = ["认为", "相信", "主张", "强调", "建议", "反对", "支持", "担心", "关注"]
-        for marker in opinion_markers:
-            if marker in content:
-                # 提取观点句子
-                sentences = content.split('。')
-                for sentence in sentences:
-                    if marker in sentence and len(sentence.strip()) > 10:
-                        key_points.append(f"{agent_name}: {sentence.strip()[:50]}...")
-        
-        # 识别争议性表达
-        controversy_markers = ["但是", "然而", "不同意", "质疑", "反驳", "挑战", "问题是"]
-        for marker in controversy_markers:
-            if marker in content:
-                controversial_points.append(f"{agent_name}对此有不同看法")
-    
-    # 去重和限制数量
-    key_points = list(dict.fromkeys(key_points))[-5:]  # 最多5个关键点
-    controversial_points = list(dict.fromkeys(controversial_points))[-3:]  # 最多3个争议点
-    
-    return key_points, controversial_points
-
-
-def get_agent_previous_positions(messages: List, active_agents: List[str], current_agent: str) -> List[str]:
-    """获取某个专家之前的立场"""
-    positions = []
-    
-    for i, message in enumerate(messages):
-        agent_index = i % len(active_agents)
-        agent_key = active_agents[agent_index]
-        
-        if agent_key == current_agent:
-            round_num = (i // len(active_agents)) + 1
-            if hasattr(message, 'content'):
-                content = message.content
-            else:
-                content = str(message)
-            
-            # 提取核心立场（简化处理）
-            clean_content = content.replace(f"{AVAILABLE_ROLES[current_agent]['name']}:", "").strip()
-            if len(clean_content) > 20:
-                positions.append(f"第{round_num}轮: {clean_content[:80]}...")
-    
-    return positions
+    return "\n".join(formatted_history)
 
 
 def get_other_participants(active_agents: List[str], current_agent: str) -> str:
@@ -362,8 +248,6 @@ def get_other_participants(active_agents: List[str], current_agent: str) -> str:
 def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAgentDebateState) -> str:
     """
     为Agent获取RAG上下文（支持用户设置和联网搜索）
-    第一轮：使用联网搜索并缓存结果
-    后续轮次：使用缓存的搜索结果
     """
     
     # 检查RAG是否启用
@@ -386,13 +270,12 @@ def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAge
         if current_round == 1 and agent_key not in first_round_rag_completed:
             print(f"🔍 第一轮：为{AVAILABLE_ROLES[agent_key]['name']}使用联网搜索...")
             
-            # 使用用户设置的数量而不是硬编码
             context = rag_module.get_rag_context_for_agent(
                 agent_role=agent_key,
                 debate_topic=debate_topic,
-                max_sources=max_refs_per_agent,  # 使用用户设置
+                max_sources=max_refs_per_agent,
                 max_results_per_source=max_results_per_source,
-                force_refresh=True  # 强制刷新确保最新资料
+                force_refresh=True
             )
             
             # 将结果缓存到状态中
@@ -426,14 +309,7 @@ def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAge
 
 def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Dict[str, Any]:
     """
-    生成指定Agent的回复（增强连贯性版本，集成联网搜索）
-    
-    Args:
-        state: 当前辩论状态
-        agent_key: Agent标识符
-        
-    Returns:
-        dict: 包含新消息和状态更新的字典
+    生成指定Agent的回复（简化版）
     """
     if deepseek is None:
         error_msg = f"{AVAILABLE_ROLES[agent_key]['name']}: 抱歉，AI模型未正确初始化。"
@@ -445,7 +321,7 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
     
     try:
         agent_info = AVAILABLE_ROLES[agent_key]
-        chat_template = create_enhanced_chat_template()
+        chat_template = create_simplified_chat_template()
         pipe = chat_template | deepseek | StrOutputParser()
         
         # 计算当前轮次和位置信息
@@ -454,17 +330,11 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
         current_round = (current_total_messages // active_agents_count) + 1
         agent_position_in_round = (current_total_messages % active_agents_count) + 1
         
-        # 格式化对话历史（增强版）
+        # 格式化对话历史（简化版）
         history = format_agent_history(state["messages"], state["active_agents"], agent_key, current_round)
         
         # 获取其他参与者信息
         other_participants = get_other_participants(state["active_agents"], agent_key)
-        
-        # 提取关键论点和争议点
-        key_points, controversial_points = extract_key_points_and_controversies(state["messages"], state["active_agents"])
-        
-        # 获取该专家之前的立场
-        previous_positions = get_agent_previous_positions(state["messages"], state["active_agents"], agent_key)
         
         # 获取联网搜索上下文（支持用户配置）
         rag_context = get_rag_context_for_agent(agent_key, state["main_topic"], state)
@@ -484,9 +354,6 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
             "other_participants": other_participants,
             "rag_context": rag_context,
             "history": history,
-            "key_points": "，".join(key_points) if key_points else "尚未提出明确论点",
-            "controversial_points": "，".join(controversial_points) if controversial_points else "暂无明显争议",
-            "your_previous_positions": "\n".join(previous_positions) if previous_positions else "这是你的首次发言"
         })
         
         # 清理并格式化响应
@@ -501,7 +368,7 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
         new_agent_index = state.get("current_agent_index", 0) + 1
         new_round = (new_total_messages // active_agents_count) + 1
         
-        # 更新状态，保持缓存信息和用户配置
+        # 更新状态
         update_data = {
             "messages": [AIMessage(content=response)],
             "total_messages": new_total_messages,
@@ -509,20 +376,11 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
             "current_round": new_round,
         }
         
-        # 更新关键论点和争议点追踪
-        updated_key_points, updated_controversies = extract_key_points_and_controversies(
-            state["messages"] + [AIMessage(content=response)], 
-            state["active_agents"]
-        )
-        update_data["key_points_raised"] = updated_key_points
-        update_data["controversial_points"] = updated_controversies
-        
         # 如果在第一轮完成了联网搜索，更新缓存状态
         if current_round == 1:
             agent_paper_cache = state.get("agent_paper_cache", {})
             first_round_rag_completed = state.get("first_round_rag_completed", [])
             
-            # 如果该专家的缓存已更新，同步到状态
             if agent_key in first_round_rag_completed:
                 update_data["agent_paper_cache"] = agent_paper_cache
                 update_data["first_round_rag_completed"] = first_round_rag_completed
@@ -540,15 +398,15 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
 
 
 def create_agent_node_function(agent_key: str):
-    """为指定Agent创建节点函数（增强连贯性版本）"""
+    """为指定Agent创建节点函数（简化版）"""
     def agent_node(state: MultiAgentDebateState) -> Command:
         try:
-            # 首先检查是否应该结束辩论
+            # 检查是否应该结束辩论
             current_total_messages = state.get("total_messages", 0)
             active_agents = state.get("active_agents", [])
             max_rounds = state.get("max_rounds", 3)
             
-            # 安全检查：确保活跃agents列表不为空
+            # 安全检查
             if not active_agents:
                 print("❌ 活跃agents列表为空，辩论结束")
                 return Command(
@@ -565,10 +423,7 @@ def create_agent_node_function(agent_key: str):
                     goto=END
                 )
             
-            # 计算当前应该是第几轮
-            current_round = (current_total_messages // len(active_agents)) + 1
-            
-            # 确认当前应该发言的专家
+            # 计算当前应该发言的专家
             expected_agent_index = current_total_messages % len(active_agents)
             expected_agent = active_agents[expected_agent_index]
             
@@ -584,14 +439,12 @@ def create_agent_node_function(agent_key: str):
             try:
                 update_data = _generate_agent_response(state, agent_key)
                 
-                # 安全检查：确保update_data包含必要的键
                 if not update_data or "messages" not in update_data:
                     print(f"❌ {agent_key} 生成的回复数据无效")
                     update_data = {
                         "messages": [AIMessage(content=f"{AVAILABLE_ROLES[agent_key]['name']}: 抱歉，我现在无法发言。")],
                         "total_messages": current_total_messages + 1,
                         "current_agent_index": state.get("current_agent_index", 0) + 1,
-                        "current_round": current_round,
                     }
                 
                 # 确定下一个节点
@@ -619,13 +472,11 @@ def create_agent_node_function(agent_key: str):
                     "messages": [AIMessage(content=f"{AVAILABLE_ROLES[agent_key]['name']}: 抱歉，技术问题导致无法发言。")],
                     "total_messages": current_total_messages + 1,
                     "current_agent_index": state.get("current_agent_index", 0) + 1,
-                    "current_round": current_round,
                 }
                 return Command(update=error_update, goto=END)
         
         except Exception as e:
             print(f"❌ 专家节点 {agent_key} 处理失败: {e}")
-            # 最终兜底：确保总是返回有效的update
             safe_update = {
                 "messages": [AIMessage(content=f"系统错误：{agent_key} 无法处理")],
                 "total_messages": state.get("total_messages", 0) + 1,
@@ -638,14 +489,7 @@ def create_agent_node_function(agent_key: str):
 
 def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True) -> StateGraph:
     """
-    创建多角色辩论图（增强连贯性版本，集成联网搜索）
-    
-    Args:
-        active_agents: 活跃Agent列表
-        rag_enabled: 是否启用RAG功能
-        
-    Returns:
-        StateGraph: 编译后的图
+    创建多角色辩论图（简化版）
     """
     if len(active_agents) < 3:
         raise ValueError("至少需要3个Agent参与辩论")
@@ -675,17 +519,16 @@ def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True)
     print(f"✅ 创建多角色辩论图成功")
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in active_agents]}")
     print(f"🌐 联网搜索: {rag_status}")
-    print(f"🔄 连贯性增强: 已启用最高级别")
     
     return builder.compile()
 
 
-def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影响", 
-                                   rounds: int = 3, 
-                                   agents: List[str] = None,
-                                   enable_rag: bool = True,
-                                   max_refs_per_agent: int = 3):
-    """测试增强连贯性版多角色辩论功能（集成联网搜索）"""
+def test_simplified_multi_agent_debate(topic: str = "人工智能对教育的影响", 
+                                     rounds: int = 3, 
+                                     agents: List[str] = None,
+                                     enable_rag: bool = True,
+                                     max_refs_per_agent: int = 3):
+    """测试简化版多角色辩论功能"""
     if agents is None:
         agents = ["tech_expert", "sociologist", "ethicist"]
     
@@ -693,13 +536,11 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
     print(f"👥 参与者: {[AVAILABLE_ROLES[k]['name'] for k in agents]}")
     print(f"📊 辩论轮数: {rounds}")
     print(f"🌐 联网搜索: {'启用' if enable_rag else '禁用'}")
-    print(f"📄 每专家文献数: {max_refs_per_agent} 篇")
     print("=" * 70)
     
     try:
         test_graph = create_multi_agent_graph(agents, rag_enabled=enable_rag)
         
-        # 测试用户配置传递
         inputs = {
             "main_topic": topic,
             "messages": [],
@@ -709,19 +550,17 @@ def test_enhanced_multi_agent_debate(topic: str = "人工智能对教育的影�
             "current_agent_index": 0,
             "total_messages": 0,
             "rag_enabled": enable_rag,
-            "rag_sources": ["web_search"],  # 使用联网搜索作为数据源
+            "rag_sources": ["web_search"],
             "collected_references": [],
             "max_refs_per_agent": max_refs_per_agent,
             "max_results_per_source": 2,
             "agent_paper_cache": {},
             "first_round_rag_completed": [],
-            # 连贯性追踪字段（默认最高级别）
+            # 简化的追踪字段
             "agent_positions": {},
             "key_points_raised": [],
             "controversial_points": []
         }
-        
-        print(f"🔍 测试配置：每专家{max_refs_per_agent}篇参考文献，连贯性追踪已启用最高级别")
         
         for i, output in enumerate(test_graph.stream(inputs, stream_mode="updates"), 1):
             print(f"消息 {i}: {output}")
@@ -739,7 +578,6 @@ def warmup_rag_system(test_topic: str = "人工智能"):
     if rag_module:
         print("🔥 预热联网搜索系统...")
         try:
-            # 测试一个简单的搜索请求
             test_results = rag_module.search_academic_sources(test_topic, max_results_per_source=1)
             if test_results:
                 print("✅ 联网搜索系统预热完成，API连接正常")
@@ -769,8 +607,8 @@ if __name__ == "__main__":
         # 预热联网搜索系统
         warmup_rag_system()
         
-        # 测试增强连贯性版辩论
-        test_enhanced_multi_agent_debate(
+        # 测试简化版辩论
+        test_simplified_multi_agent_debate(
             topic="ChatGPT对教育的影响",
             rounds=3,
             agents=["tech_expert", "sociologist", "ethicist"],

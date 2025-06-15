@@ -59,42 +59,6 @@ def display_rag_status(rag_enabled, max_refs_per_agent=3):
     else:
         st.info("🌐 联网搜索已禁用，将基于内置知识辩论")
 
-def display_debate_progress(current_round, max_rounds, current_agent_index, total_agents, total_messages):
-    """显示辩论进度"""
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        progress = current_round / max_rounds
-        st.metric("辩论进度", f"{current_round}/{max_rounds} 轮")
-        st.progress(progress)
-    
-    with col2:
-        st.metric("总发言数", f"{total_messages} 条")
-        messages_this_round = (current_agent_index % total_agents) if current_agent_index > 0 else 0
-        st.caption(f"本轮已发言: {messages_this_round}/{total_agents}")
-    
-    with col3:
-        if current_round > 1:
-            st.metric("连贯性状态", "✅ 已启用")
-            st.caption("专家将回应前轮观点")
-        else:
-            st.metric("连贯性状态", "🔄 首轮立场")
-            st.caption("专家阐述基本观点")
-
-def display_debate_summary(key_points, controversial_points):
-    """显示辩论要点总结"""
-    if key_points or controversial_points:
-        with st.expander("📊 辩论要点总结", expanded=False):
-            if key_points:
-                st.subheader("🎯 主要论点")
-                for i, point in enumerate(key_points, 1):
-                    st.markdown(f"{i}. {point}")
-            
-            if controversial_points:
-                st.subheader("⚡ 争议焦点")
-                for i, point in enumerate(controversial_points, 1):
-                    st.markdown(f"{i}. {point}")
-
 def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
     """
     在第一轮开始前为所有专家预加载联网搜索资料
@@ -167,26 +131,6 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
         preload_progress.progress(1.0)
         preload_status.success(f"✅ 所有专家的联网搜索资料预加载完成！")
         
-        # 显示预加载统计
-        success_count = sum(1 for r in preload_results.values() if r['success'])
-        total_refs = sum(r['ref_count'] for r in preload_results.values())
-        
-        with st.expander("📊 预加载详情", expanded=False):
-            st.markdown(f"""
-            **预加载统计**：
-            - 成功搜索专家：{success_count}/{total_agents}
-            - 总参考文献数：{total_refs} 篇
-            - 平均每专家：{total_refs/total_agents:.1f} 篇
-            """)
-            
-            for agent_key, result in preload_results.items():
-                agent_name = AVAILABLE_ROLES[agent_key]["name"]
-                status_icon = "✅" if result['success'] else "⚠️"
-                st.markdown(f"""
-                **{status_icon} {agent_name}**:
-                - 文献数：{result['ref_count']} 篇
-                """)
-        
         return {"success": True, "message": "预加载完成", "results": preload_results}
         
     except Exception as e:
@@ -198,8 +142,8 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
     生成多Agent辩论响应
     
     Args:
-        input_text (str): 辞论主题
-        max_rounds (int): 最大辞论轮数
+        input_text (str): 辩论主题
+        max_rounds (int): 最大辩论轮数
         selected_agents (list): 选中的Agent列表
         rag_config (dict): RAG配置，包含用户的所有设置
     """
@@ -249,16 +193,14 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
     st.markdown("---")
     
     # 如果启用联网搜索，进行预加载
-    preload_results = None
     if rag_enabled:
         st.subheader("🌐 联网搜索资料预加载")
         
         preload_result = preload_rag_for_all_agents(selected_agents, input_text, rag_config)
-        preload_results = preload_result.get("results", {})
         
         if not preload_result["success"]:
             st.error(f"❌ 预加载失败: {preload_result['message']}")
-            if st.button("🚀 继续辞论（不使用联网搜索）"):
+            if st.button("🚀 继续辩论（不使用联网搜索）"):
                 rag_config['enabled'] = False
                 rag_enabled = False
             else:
@@ -281,30 +223,19 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
         "max_results_per_source": 2,
         "agent_paper_cache": {},
         "first_round_rag_completed": [],
-        # 连贯性字段
+        # 简化版只保留基本字段
         "agent_positions": {},
         "key_points_raised": [],
         "controversial_points": []
     }
     
-    # 创建进度显示容器
-    progress_container = st.container()
-    
-    with progress_container:
-        st.subheader("📊 辩论进度追踪")
-        progress_placeholder = st.empty()
-        
-        st.subheader("💬 辩论实况")
-        debate_summary_placeholder = st.empty()
+    # 简化的进度显示
+    st.subheader("💬 辩论实况")
+    progress_placeholder = st.empty()
     
     total_expected_messages = max_rounds * len(selected_agents)
     message_count = 0
     current_round = 1
-    displayed_messages = []
-    
-    # 连贯性追踪
-    key_points_tracker = []
-    controversial_points_tracker = []
     
     # 开始辩论流
     try:
@@ -360,50 +291,16 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
                     is_latest = True  # 新消息总是最新的
                     display_agent_message(agent_key, message, agent_info, current_round, is_latest)
                     
-                    # 记录消息用于后续分析
-                    displayed_messages.append({
-                        'agent_key': agent_key,
-                        'agent_name': agent_info['name'],
-                        'message': message,
-                        'round': current_round
-                    })
-                    
-                    # 更新连贯性追踪
-                    if agent_update.get("key_points_raised"):
-                        key_points_tracker = agent_update["key_points_raised"]
-                    if agent_update.get("controversial_points"):
-                        controversial_points_tracker = agent_update["controversial_points"]
-                    
-                    # 更新进度显示
+                    # 简化的进度显示
                     with progress_placeholder:
-                        display_debate_progress(
-                            current_round, 
-                            max_rounds, 
-                            message_count, 
-                            len(selected_agents), 
-                            message_count
-                        )
-                    
-                    # 显示辩论要点总结（如果有）
-                    if key_points_tracker or controversial_points_tracker:
-                        with debate_summary_placeholder:
-                            display_debate_summary(key_points_tracker, controversial_points_tracker)
-                    
-                    # 轮次间的连贯性提示
-                    if message_count % len(selected_agents) == 0 and current_round > 1:
-                        st.markdown(f"""
-                        <div style="
-                            text-align: center; 
-                            padding: 1rem; 
-                            margin: 1rem 0;
-                            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-                            color: white;
-                            border-radius: 10px;
-                            font-weight: bold;
-                        ">
-                            🔄 第{current_round}轮完成 | 专家们正在深化论证和回应前轮观点
-                        </div>
-                        """, unsafe_allow_html=True)
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("当前轮次", f"{current_round}/{max_rounds}")
+                        with col2:
+                            st.metric("总发言数", f"{message_count}")
+                        with col3:
+                            progress = message_count / total_expected_messages
+                            st.metric("进度", f"{int(progress * 100)}%")
                     
                     # 添加小延迟增强观感
                     time.sleep(0.8)
@@ -416,54 +313,7 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config):
         return
     
     # 完成提示
-    with progress_placeholder:
-        display_debate_progress(max_rounds, max_rounds, total_expected_messages, len(selected_agents), total_expected_messages)
-    
     st.success("🎉 辩论圆满结束！")
-    
-    # 显示最终辩论总结
-    st.subheader("📊 辩论总结分析")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### 📈 数据统计")
-        st.metric("总轮次", max_rounds)
-        st.metric("总发言", message_count)
-        st.metric("参与专家", len(selected_agents))
-        
-        if rag_enabled:
-            success_agents = len([r for r in preload_results.values() if r['success']]) if preload_results else 0
-            total_refs = sum(r['ref_count'] for r in preload_results.values()) if preload_results else 0
-            st.metric("搜索专家", f"{success_agents}/{len(selected_agents)}")
-            st.metric("总参考文献", f"{total_refs} 篇")
-    
-    with col2:
-        st.markdown("### 🎯 连贯性分析")
-        if key_points_tracker:
-            st.write(f"**主要论点**: {len(key_points_tracker)} 个")
-        if controversial_points_tracker:
-            st.write(f"**争议焦点**: {len(controversial_points_tracker)} 个")
-        
-        # 分析每个专家的发言频率
-        agent_counts = {}
-        for msg in displayed_messages:
-            agent_name = msg['agent_name']
-            agent_counts[agent_name] = agent_counts.get(agent_name, 0) + 1
-        
-        st.write("**发言分布**:")
-        for agent_name, count in agent_counts.items():
-            st.write(f"- {agent_name}: {count} 次")
-    
-    # 最终要点总结
-    if key_points_tracker or controversial_points_tracker:
-        st.subheader("🔍 核心要点回顾")
-        display_debate_summary(key_points_tracker, controversial_points_tracker)
-    
-    # 显示辩论总结
-    if rag_enabled:
-        st.success("🎉 辩论圆满结束！")
-        st.info("📊 本次辩论采用了连贯性追踪技术和Kimi联网搜索，提供了最新的信息支撑和逻辑连贯的讨论！")
 
 # 页面配置
 st.set_page_config(
@@ -522,11 +372,9 @@ st.markdown("""
 st.markdown("""
 <h1 class="main-header">🎭 多角色AI辩论平台</h1>
 <div style="text-align: center; margin-bottom: 2rem;">
-    <span class="feature-badge">🔄 连贯性追踪</span>
-    <span class="feature-badge">📊 争议点分析</span>
-    <span class="feature-badge">🎯 历史回顾</span>
     <span class="feature-badge">🌐 Kimi联网搜索</span>
     <span class="feature-badge">🚀 智能缓存</span>
+    <span class="feature-badge">🎯 实时辩论</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -646,44 +494,6 @@ with col1:
             value=selected_topic,
             height=100
         )
-    
-    # 联网搜索预览功能
-    if rag_enabled and topic_text and len(topic_text.strip()) > 10:
-        if st.button("🌐 预览Kimi联网搜索结果", help="提前查看各专家角色的相关联网搜索资料"):
-            if len(selected_agents) >= 3:
-                with st.spinner("正在为各专家角色进行Kimi联网搜索..."):
-                    try:
-                        rag_module = get_rag_module()
-                        if rag_module:
-                            st.info(f"🔍 预览配置：每专家 {max_refs_per_agent} 篇文献")
-                            
-                            # 为每个选中的专家预览搜索结果
-                            for agent_key in selected_agents[:3]:  # 限制预览前3个角色
-                                agent_name = AVAILABLE_ROLES[agent_key]["name"]
-                                
-                                preview_context = rag_module.get_rag_context_for_agent(
-                                    agent_role=agent_key,
-                                    debate_topic=topic_text.strip(),
-                                    max_sources=max_refs_per_agent,
-                                    max_results_per_source=2,
-                                    force_refresh=False
-                                )
-                                
-                                if preview_context and preview_context.strip() != "暂无相关学术资料。":
-                                    ref_count = preview_context.count('参考资料')
-                                    with st.expander(f"🌐 {agent_name} 的相关资料 ({ref_count} 篇)"):
-                                        st.markdown(preview_context[:500] + "...")
-                                else:
-                                    st.warning(f"⚠️ {agent_name}: 未找到直接相关的联网搜索资料")
-                                
-                            if len(selected_agents) > 3:
-                                st.info(f"📝 预览显示前3位专家，另外 {len(selected_agents)-3} 位专家的资料将在正式辩论时搜索")
-                        else:
-                            st.error("联网搜索模块未正确初始化")
-                    except Exception as e:
-                        st.error(f"预览搜索失败: {e}")
-            else:
-                st.warning("请先选择至少3个专家角色")
 
 with col2:
     st.subheader("⚙️ 辩论参数")
@@ -700,18 +510,8 @@ with col2:
     # 预估信息
     if len(selected_agents) >= 3:
         total_messages = max_rounds * len(selected_agents)
-        base_time = total_messages * 8  # 基础时间
-        
-        if rag_enabled:
-            # 联网搜索时间计算
-            first_round_time = len(selected_agents) * (15 + max_refs_per_agent * 5)
-            later_rounds_time = (total_messages - len(selected_agents)) * 3
-            estimated_time = base_time + first_round_time + later_rounds_time
-        else:
-            estimated_time = base_time
         
         st.metric("总发言数", f"{total_messages} 条")
-        st.metric("预估时长", f"{estimated_time//60}分{estimated_time%60}秒")
         st.metric("参与角色", f"{len(selected_agents)} 个")
         
         if rag_enabled:
@@ -756,19 +556,17 @@ if start_debate and can_start:
         'enabled': rag_enabled,
         'sources': ['web_search'] if rag_enabled else [],
         'max_refs_per_agent': max_refs_per_agent if rag_enabled else 0,
-        'coherence_level': '最大',  # 默认设置为最大
-        'show_history_tracking': True,
-        'show_controversy_analysis': True
     }
     
     st.success(f"🎯 辩论话题: {topic_text}")
     st.info(f"👥 参与角色: {', '.join([AVAILABLE_ROLES[key]['name'] for key in selected_agents])}")
     
-    feature_list = ["🔄 连贯性追踪", "📊 争议点分析", "🎯 历史回顾"]
+    feature_list = []
     if rag_enabled:
         feature_list.append(f"🌐 Kimi联网搜索 (每专家{max_refs_per_agent}篇)")
     
-    st.info(f"✨ 启用特性: {' | '.join(feature_list)}")
+    if feature_list:
+        st.info(f"✨ 启用特性: {' | '.join(feature_list)}")
     
     st.markdown("---")
     
@@ -777,14 +575,12 @@ if start_debate and can_start:
     
     # 辩论结束
     st.balloons()
-    st.success("🎉 辩论圆满结束！各位专家基于连贯性分析和Kimi联网搜索的精彩论证令人印象深刻！")
 
 # 页脚
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; opacity: 0.7;'>
-    🎭 多角色AI辩论平台 | 连贯性追踪 + Kimi联网搜索<br>
-    🔗 Powered by <a href='https://platform.deepseek.com/'>DeepSeek</a> & <a href='https://www.moonshot.cn/'>Kimi</a> & <a href='https://streamlit.io/'>Streamlit</a><br>
-    🌐 智能技术: 连贯性追踪 + Kimi联网搜索 + 智能缓存
+    🎭 多角色AI辩论平台<br>
+    🔗 Powered by <a href='https://platform.deepseek.com/'>DeepSeek</a> & <a href='https://www.moonshot.cn/'>Kimi</a> & <a href='https://streamlit.io/'>Streamlit</a>
 </div>
 """, unsafe_allow_html=True)
