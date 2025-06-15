@@ -1,6 +1,6 @@
 #  多角色AI辩论平台
 
-一个基于Streamlit的多角色AI辩论系统，支持3-6个不同专业角色就特定话题进行智能辩论。集成DeepSeek大语言模型和Kimi联网搜索功能，为每个角色提供实时的学术资料支持。
+一个基于Streamlit的多角色AI辩论系统，支持3-6个不同专业角色就特定话题进行智能辩论。集成DeepSeek大语言模型和Kimi联网搜索功能，为每个角色提供实时的学术资料支持。并通过Siliconflow的API实现语音播放。
 
 ## 主要特性
 
@@ -9,11 +9,14 @@
 - **实时辩论展示**：流式展示辩论过程，支持多轮深度讨论
 - **缓存机制**：智能缓存搜索结果，提高响应速度
 - **灵活配置**：用户可自定义参与角色、辩论轮数、参考文献数量等参数
+- **语音播放**：通过Siliconflow的API实现语音播放
+- **多线程**：通过多线程的方式，实现语音文字生成与语音播放异步进行，从而避免等待，实现流畅连续的辩论
 
 ## 环境要求
 
 - DeepSeek API密钥
 - Kimi API密钥
+- Siliconflow API密钥(如需要语音播放)
 
 ## 安装步骤
 
@@ -21,6 +24,7 @@
    ```env
    DEEPSEEK_API_KEY=your_deepseek_api_key
    KIMI_API_KEY=your_kimi_api_key
+   SILICONCLOUD_API_KEY=your_siliconflow_api_key
    ```
 
 ## 使用方法

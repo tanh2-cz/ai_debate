@@ -1,5 +1,5 @@
 """
-多角色AI辩论平台 - 异步生成同步播放版
+多角色AI辩论平台
 支持精确音频时长检测
 
 依赖安装：
@@ -31,8 +31,8 @@ class MessageItem:
     audio_duration: float = 0.0
     generation_order: int = 0
 
-class AsyncDebateManager:
-    """异步辩论管理器"""
+class DebateManager:
+    """辩论管理器"""
     
     def __init__(self):
         self.message_queue = queue.Queue()
@@ -60,12 +60,12 @@ class AsyncDebateManager:
 def initialize_session_state():
     """初始化session state"""
     if 'debate_manager' not in st.session_state:
-        st.session_state.debate_manager = AsyncDebateManager()
+        st.session_state.debate_manager = DebateManager()
     if 'displayed_messages' not in st.session_state:
         st.session_state.displayed_messages = []
 
-def generate_tts_async(text: str, agent_key: str) -> tuple:
-    """异步生成TTS，返回(音频数据, 时长)"""
+def generate_tts(text: str, agent_key: str) -> tuple:
+    """生成语音，返回(音频数据, 时长)"""
     tts_module = get_tts_module()
     if tts_module and st.session_state.get('tts_enabled', True):
         try:
@@ -85,7 +85,7 @@ def background_generation_worker(inputs, current_graph, selected_agents, tts_ena
         debate_manager.is_generating = True
         message_count = 0
         
-        print("🚀 后台线程开始生成消息...")
+        print("🚀 开始生成消息...")
         
         for update in current_graph.stream(inputs, {"recursion_limit": 200}, stream_mode="updates"):
             if not update:
@@ -135,21 +135,21 @@ def background_generation_worker(inputs, current_graph, selected_agents, tts_ena
                     message_count += 1
                     current_round = ((message_count - 1) // len(selected_agents)) + 1
                     
-                    print(f"📝 后台生成: 第{current_round}轮 - {agent_info['name']} ({message_count})")
+                    print(f"📝 生成: 第{current_round}轮 - {agent_info['name']} ({message_count})")
                     
-                    # 在后台生成TTS
+                    # 生成语音
                     audio_data = None
                     audio_duration = 0.0
                     if tts_enabled:
                         try:
-                            print(f"🔊 后台生成TTS: {agent_info['name']}")
-                            audio_data, audio_duration = generate_tts_async(message, agent_key)
+                            print(f"🔊 生成语音: {agent_info['name']}")
+                            audio_data, audio_duration = generate_tts(message, agent_key)
                             if audio_data:
-                                print(f"✅ TTS生成完成: {agent_info['name']}, 时长: {audio_duration:.2f}秒")
+                                print(f"✅ 语音生成完成: {agent_info['name']}, 时长: {audio_duration:.2f}秒")
                             else:
-                                print(f"⚠️ TTS生成失败: {agent_info['name']}")
+                                print(f"⚠️ 语音生成失败: {agent_info['name']}")
                         except Exception as e:
-                            print(f"❌ TTS生成异常: {agent_info['name']}, {e}")
+                            print(f"❌ 语音生成异常: {agent_info['name']}, {e}")
                     
                     # 创建消息项并加入队列
                     message_item = MessageItem(
@@ -170,10 +170,10 @@ def background_generation_worker(inputs, current_graph, selected_agents, tts_ena
         
         debate_manager.generation_complete = True
         debate_manager.is_generating = False
-        print(f"🎉 后台生成完成! 共生成 {message_count} 条消息")
+        print(f"🎉 生成完成! 共生成 {message_count} 条消息")
         
     except Exception as e:
-        print(f"❌ 后台生成线程出错: {e}")
+        print(f"❌ 生成线程出错: {e}")
         debate_manager.generation_complete = True
         debate_manager.is_generating = False
 
@@ -246,7 +246,7 @@ def display_message_with_audio(message_item: MessageItem, is_latest: bool = Fals
                 
                 # 使用实际音频时长或备用估算
                 if message_item.audio_duration > 0:
-                    duration = message_item.audio_duration + 3  # 加3秒缓冲
+                    duration = message_item.audio_duration + 3  # 增加3秒缓冲
                     duration_source = "实际"
                 else:
                     # 备用估算方法
@@ -289,7 +289,7 @@ def display_tts_status(tts_enabled):
 
 def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
     """
-    在第一轮开始前为所有专家预加载联网搜索资料
+    为所有专家预加载联网搜索资料
     
     Args:
         selected_agents (list): 选中的专家列表
@@ -367,7 +367,7 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
 
 def generate_response(input_text, max_rounds, selected_agents, rag_config, tts_enabled=True):
     """
-    生成多Agent辩论响应（真正异步版：API请求和播放同时进行）
+    生成多Agent辩论响应
     
     Args:
         input_text (str): 辩论主题
@@ -474,7 +474,6 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config, tts_e
         "max_results_per_source": 2,
         "agent_paper_cache": {},
         "first_round_rag_completed": [],
-        # 简化版只保留基本字段
         "agent_positions": {},
         "key_points_raised": [],
         "controversial_points": []
@@ -494,7 +493,7 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config, tts_e
     
     # 启动后台生成线程
     with status_container:
-        st.info("🚀 正在启动异步辩论生成...")
+        st.info("🚀 正在启动辩论生成...")
     
     generation_thread = threading.Thread(
         target=background_generation_worker,
@@ -583,6 +582,10 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config, tts_e
             # 检查是否完成
             if (debate_manager.generation_complete and 
                 len(st.session_state.displayed_messages) >= debate_manager.total_expected_messages):
+                playback_status.metric(
+                "已播放", 
+                f"{len(st.session_state.displayed_messages)}"
+                )
                 break
             
             # 短暂等待，避免过度占用CPU
@@ -657,9 +660,9 @@ st.markdown("""
 <h1 class="main-header">🎭 多角色AI辩论平台</h1>
 <div style="text-align: center; margin-bottom: 2rem;">
     <span class="feature-badge">🌐 联网搜索</span>
-    <span class="feature-badge">🔊 精确语音</span>
+    <span class="feature-badge">🔊 语音播放</span>
     <span class="feature-badge">🚀 智能缓存</span>
-    <span class="feature-badge">⚡ 真正异步</span>
+    <span class="feature-badge">⚡ 实时生成</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -683,7 +686,6 @@ with st.sidebar:
     
     if tts_enabled:
         st.success("🔊 语音播放已启用")
-        st.info("💡 API请求和语音播放完全异步进行，使用精确音频时长")
     else:
         st.warning("🔇 语音播放已禁用")
     
@@ -830,7 +832,7 @@ with col2:
             
         if tts_enabled:
             st.success("🔊 语音播放已启用")
-            st.info(f"异步语音：{total_messages} 条")
+            st.info(f"语音发言：{total_messages} 条")
 
 # 辩论控制区域
 st.markdown("---")
@@ -853,7 +855,7 @@ if not can_start:
 
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
-    button_text = f"🎭 开始异步辩论（{max_rounds}轮）"
+    button_text = f"🎭 开始辩论（{max_rounds}轮）"
     
     start_debate = st.button(
         button_text,
@@ -878,7 +880,7 @@ if start_debate and can_start:
     if rag_enabled:
         feature_list.append(f"🌐 联网搜索 (每专家{max_refs_per_agent}篇)")
     if tts_enabled:
-        feature_list.append("🔊 真正异步播放")
+        feature_list.append("🔊 语音播放")
     
     if feature_list:
         st.info(f"✨ 启用特性: {' | '.join(feature_list)}")
@@ -895,7 +897,7 @@ if start_debate and can_start:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; opacity: 0.7;'>
-    🎭 多角色AI辩论平台 - 真正异步版（精确音频时长）<br>
+    🎭 多角色AI辩论平台<br>
     🔗 Powered by <a href='https://platform.deepseek.com/'>DeepSeek</a> & <a href='https://www.moonshot.cn/'>Kimi</a> & <a href='https://siliconflow.cn/'>SiliconCloud</a> & <a href='https://streamlit.io/'>Streamlit</a>
 </div>
 """, unsafe_allow_html=True)

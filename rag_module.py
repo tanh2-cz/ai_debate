@@ -1,8 +1,7 @@
 """
-动态RAG模块 - 基于Kimi API联网搜索的学术文献检索（简化版）
+动态RAG模块 - 基于Kimi API联网搜索的学术文献检索
 使用Kimi API的$web_search工具进行实时联网学术文献检索和分析
 集成JSON Mode功能，获得结构化的搜索结果
-专注核心搜索功能，简化复杂分析
 """
 
 import os
@@ -482,14 +481,14 @@ class AcademicSearcher:
             return []
 
 class DynamicRAGModule:
-    """动态RAG主模块（基于Kimi API联网搜索的学术文献检索，简化版）"""
+    """动态RAG主模块（基于Kimi API联网搜索的学术文献检索）"""
     
     def __init__(self, llm: ChatDeepSeek):
         self.llm = llm
         self.cache = RAGCache()
         self.academic_searcher = AcademicSearcher()
         
-        print("✅ 简化版RAG模块初始化成功")
+        print("✅ RAG模块初始化成功")
     
     def search_academic_sources(self, 
                               topic: str, 
@@ -684,24 +683,24 @@ class DynamicRAGModule:
 rag_module = None
 
 def initialize_rag_module(llm: ChatDeepSeek) -> DynamicRAGModule:
-    """初始化RAG模块（基于Kimi API联网搜索，简化版）"""
+    """初始化RAG模块（基于Kimi API联网搜索）"""
     global rag_module
     try:
         rag_module = DynamicRAGModule(llm)
-        print("🔍 简化版RAG模块已初始化，使用Kimi API联网搜索功能")
+        print("🔍 RAG模块已初始化，使用Kimi API联网搜索功能")
         return rag_module
     except Exception as e:
-        print(f"❌ 简化版RAG模块初始化失败: {e}")
+        print(f"❌ RAG模块初始化失败: {e}")
         return None
 
 def get_rag_module() -> Optional[DynamicRAGModule]:
     """获取RAG模块实例"""
     return rag_module
 
-# 简化版测试函数
+# 测试函数
 def test_rag_module():
-    """测试基于Kimi JSON Mode联网搜索的RAG模块功能（简化版）"""
-    print("🧪 开始测试基于Kimi JSON Mode联网搜索的RAG模块（简化版）...")
+    """测试基于Kimi JSON Mode联网搜索的RAG模块功能"""
+    print("🧪 开始测试基于Kimi JSON Mode联网搜索的RAG模块...")
     
     # 检查环境变量
     if not os.getenv("KIMI_API_KEY"):
@@ -717,7 +716,7 @@ def test_rag_module():
         rag = initialize_rag_module(test_llm)
         
         if not rag:
-            print("❌ 简化版RAG模块初始化失败")
+            print("❌ RAG模块初始化失败")
             return
         
         # 简单测试
@@ -743,7 +742,7 @@ def test_rag_module():
             print(f"❌ 测试出错: {e}")
             
     except Exception as e:
-        print(f"❌ 简化版RAG模块测试失败: {e}")
+        print(f"❌ RAG模块测试失败: {e}")
 
 if __name__ == "__main__":
     test_rag_module()

@@ -1,7 +1,6 @@
 """
-多角色AI辩论系统核心逻辑 - Kimi联网搜索集成版本（简化版）
+多角色AI辩论系统核心逻辑
 支持3-6个不同角色的智能辩论，基于Kimi API的联网搜索功能
-简化版：专注核心辩论功能，移除复杂分析
 """
 
 from typing import TypedDict, Literal, List, Dict, Any
@@ -50,7 +49,7 @@ except Exception as e:
 
 
 class MultiAgentDebateState(MessagesState):
-    """多角色辩论状态管理（简化版）"""
+    """多角色辩论状态管理"""
     main_topic: str = "人工智能的发展前景"
     current_round: int = 0              # 当前轮次
     max_rounds: int = 3                 # 最大轮次
@@ -69,7 +68,7 @@ class MultiAgentDebateState(MessagesState):
     agent_paper_cache: Dict[str, str] = {}  # 格式: {agent_key: rag_context}
     first_round_rag_completed: List[str] = []  # 已完成第一轮RAG检索的专家列表
     
-    # 简化的状态字段
+    # 状态字段
     agent_positions: Dict[str, List[str]] = {}  # 基本的专家立场记录
     key_points_raised: List[str] = []  # 基本的关键论点
     controversial_points: List[str] = []  # 基本的争议观点
@@ -151,8 +150,8 @@ AVAILABLE_ROLES = {
 }
 
 
-# 简化版多角色辩论提示词模板
-SIMPLIFIED_MULTI_AGENT_DEBATE_TEMPLATE = """
+# 多角色辩论提示词模板
+MULTI_AGENT_DEBATE_TEMPLATE = """
 你是一位{role} - {name}。
 
 【角色背景】
@@ -178,10 +177,11 @@ SIMPLIFIED_MULTI_AGENT_DEBATE_TEMPLATE = """
 【发言要求】
 请基于你的专业角色，针对辩论主题发表观点：
 
-1. **第一轮**：阐述你的基本立场和核心关切
+1. **第一轮**：阐述你的基本立场和核心关切，如果不是第一位发言则需要回应其他专家的观点
 2. **后续轮次**：回应其他专家的观点，并深化你的论证
 3. **保持专业特色**：充分体现你的专业背景和视角
-4. **适当引用资料**：如有联网搜索资料，可简洁引用
+4. **适当引用资料**：如有联网搜索资料，可简洁引用,比如：正如2023年经济学报所述。
+5. **引用注意**：不要出现（参考资料1）这样不明确的描述。
 
 【发言格式】
 请直接发表你的观点，无需加名字前缀。控制在3-4句话内，确保观点明确且具有专业深度。
@@ -190,16 +190,16 @@ SIMPLIFIED_MULTI_AGENT_DEBATE_TEMPLATE = """
 """
 
 
-def create_simplified_chat_template():
-    """创建简化版聊天模板"""
+def create_chat_template():
+    """创建聊天模板"""
     return ChatPromptTemplate.from_messages([
-        ("system", SIMPLIFIED_MULTI_AGENT_DEBATE_TEMPLATE),
+        ("system", MULTI_AGENT_DEBATE_TEMPLATE),
         ("user", "请基于以上背景发表你的专业观点"),
     ])
 
 
 def format_agent_history(messages: List, active_agents: List[str], current_agent: str, current_round: int) -> str:
-    """格式化对话历史（简化版）"""
+    """格式化对话历史"""
     if not messages:
         return "这是辩论的开始，你是本轮第一个发言的人。请阐述你的基本立场。"
     
@@ -309,7 +309,7 @@ def get_rag_context_for_agent(agent_key: str, debate_topic: str, state: MultiAge
 
 def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Dict[str, Any]:
     """
-    生成指定Agent的回复（简化版）
+    生成指定Agent的回复
     """
     if deepseek is None:
         error_msg = f"{AVAILABLE_ROLES[agent_key]['name']}: 抱歉，AI模型未正确初始化。"
@@ -321,7 +321,7 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
     
     try:
         agent_info = AVAILABLE_ROLES[agent_key]
-        chat_template = create_simplified_chat_template()
+        chat_template = create_chat_template()
         pipe = chat_template | deepseek | StrOutputParser()
         
         # 计算当前轮次和位置信息
@@ -330,7 +330,7 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
         current_round = (current_total_messages // active_agents_count) + 1
         agent_position_in_round = (current_total_messages % active_agents_count) + 1
         
-        # 格式化对话历史（简化版）
+        # 格式化对话历史
         history = format_agent_history(state["messages"], state["active_agents"], agent_key, current_round)
         
         # 获取其他参与者信息
@@ -398,7 +398,7 @@ def _generate_agent_response(state: MultiAgentDebateState, agent_key: str) -> Di
 
 
 def create_agent_node_function(agent_key: str):
-    """为指定Agent创建节点函数（简化版）"""
+    """为指定Agent创建节点函数"""
     def agent_node(state: MultiAgentDebateState) -> Command:
         try:
             # 检查是否应该结束辩论
@@ -489,7 +489,7 @@ def create_agent_node_function(agent_key: str):
 
 def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True) -> StateGraph:
     """
-    创建多角色辩论图（简化版）
+    创建多角色辩论图
     """
     if len(active_agents) < 3:
         raise ValueError("至少需要3个Agent参与辩论")
@@ -523,12 +523,12 @@ def create_multi_agent_graph(active_agents: List[str], rag_enabled: bool = True)
     return builder.compile()
 
 
-def test_simplified_multi_agent_debate(topic: str = "人工智能对教育的影响", 
-                                     rounds: int = 3, 
-                                     agents: List[str] = None,
-                                     enable_rag: bool = True,
-                                     max_refs_per_agent: int = 3):
-    """测试简化版多角色辩论功能"""
+def test_multi_agent_debate(topic: str = "人工智能对教育的影响", 
+                           rounds: int = 3, 
+                           agents: List[str] = None,
+                           enable_rag: bool = True,
+                           max_refs_per_agent: int = 3):
+    """测试多角色辩论功能"""
     if agents is None:
         agents = ["tech_expert", "sociologist", "ethicist"]
     
@@ -556,7 +556,6 @@ def test_simplified_multi_agent_debate(topic: str = "人工智能对教育的影
             "max_results_per_source": 2,
             "agent_paper_cache": {},
             "first_round_rag_completed": [],
-            # 简化的追踪字段
             "agent_positions": {},
             "key_points_raised": [],
             "controversial_points": []
@@ -607,8 +606,8 @@ if __name__ == "__main__":
         # 预热联网搜索系统
         warmup_rag_system()
         
-        # 测试简化版辩论
-        test_simplified_multi_agent_debate(
+        # 测试辩论
+        test_multi_agent_debate(
             topic="ChatGPT对教育的影响",
             rounds=3,
             agents=["tech_expert", "sociologist", "ethicist"],
