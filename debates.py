@@ -1,25 +1,189 @@
+"""
+多角色AI辩论平台 - 异步生成同步播放版
+支持精确音频时长检测
+
+依赖安装：
+pip install pydub
+
+注意：如果没有安装 pydub，系统会回退到估算模式
+"""
+
 import streamlit as st
 from graph import AVAILABLE_ROLES, create_multi_agent_graph, warmup_rag_system
 from rag_module import get_rag_module
 from tts_module import initialize_tts_module, get_tts_module
 import time
 import threading
-import base64  # 新增：用于音频数据转换
+import base64
+from typing import List, Dict, Any
+import queue
+from dataclasses import dataclass
+import concurrent.futures
 
-def display_agent_message(agent_key, message, agent_info, round_num=None, is_latest=False):
-    """
-    显示Agent消息并使用st.audio播放语音（修复版）
+@dataclass
+class MessageItem:
+    """消息项数据类"""
+    agent_key: str
+    message: str
+    agent_info: dict
+    round_num: int
+    audio_data: str = None
+    audio_duration: float = 0.0
+    generation_order: int = 0
+
+class AsyncDebateManager:
+    """异步辩论管理器"""
     
-    Args:
-        agent_key (str): Agent标识符
-        message (str): 消息内容 
-        agent_info (dict): Agent信息
-        round_num (int): 轮次编号
-        is_latest (bool): 是否为最新消息
-    """
-    icon = agent_info["icon"]
-    color = agent_info["color"]
-    name = agent_info["name"]
+    def __init__(self):
+        self.message_queue = queue.Queue()
+        self.is_generating = False
+        self.generation_complete = False
+        self.total_expected_messages = 0
+        self.messages_generated = 0
+        self.current_play_index = 0
+        self.is_playing = False
+        
+    def reset(self):
+        """重置管理器状态"""
+        while not self.message_queue.empty():
+            try:
+                self.message_queue.get_nowait()
+            except queue.Empty:
+                break
+        self.is_generating = False
+        self.generation_complete = False
+        self.total_expected_messages = 0
+        self.messages_generated = 0
+        self.current_play_index = 0
+        self.is_playing = False
+
+def initialize_session_state():
+    """初始化session state"""
+    if 'debate_manager' not in st.session_state:
+        st.session_state.debate_manager = AsyncDebateManager()
+    if 'displayed_messages' not in st.session_state:
+        st.session_state.displayed_messages = []
+
+def generate_tts_async(text: str, agent_key: str) -> tuple:
+    """异步生成TTS，返回(音频数据, 时长)"""
+    tts_module = get_tts_module()
+    if tts_module and st.session_state.get('tts_enabled', True):
+        try:
+            result = tts_module.text_to_speech(text, agent_key)
+            if result:
+                return result  # (audio_data, duration)
+            else:
+                return (None, 0.0)
+        except Exception as e:
+            print(f"⚠️ TTS生成失败: {e}")
+            return (None, 0.0)
+    return (None, 0.0)
+
+def background_generation_worker(inputs, current_graph, selected_agents, tts_enabled, debate_manager):
+    """后台生成工作线程"""
+    try:
+        debate_manager.is_generating = True
+        message_count = 0
+        
+        print("🚀 后台线程开始生成消息...")
+        
+        for update in current_graph.stream(inputs, {"recursion_limit": 200}, stream_mode="updates"):
+            if not update:
+                continue
+                
+            # 检查每个可能的Agent节点
+            for agent_key in selected_agents:
+                if agent_key in update and update[agent_key] is not None:
+                    agent_update = update[agent_key]
+                    
+                    # 确保agent_update包含messages键
+                    if not isinstance(agent_update, dict) or "messages" not in agent_update:
+                        print(f"⚠️ {agent_key} 的更新数据格式无效: {agent_update}")
+                        continue
+                    
+                    messages = agent_update["messages"]
+                    
+                    # 确保messages不为空
+                    if not messages or len(messages) == 0:
+                        print(f"⚠️ {agent_key} 的消息列表为空")
+                        continue
+                    
+                    # 安全获取消息对象
+                    try:
+                        message_obj = messages[0]
+                    except (IndexError, TypeError) as e:
+                        print(f"⚠️ 无法获取 {agent_key} 的消息: {e}")
+                        continue
+                    
+                    agent_info = AVAILABLE_ROLES.get(agent_key)
+                    if not agent_info:
+                        print(f"⚠️ 未找到 {agent_key} 的角色信息")
+                        continue
+                    
+                    # 获取消息内容
+                    if hasattr(message_obj, 'content'):
+                        message = message_obj.content
+                    else:
+                        message = str(message_obj)
+                    
+                    # 确保消息不为空
+                    if not message or message.strip() == "":
+                        print(f"⚠️ {agent_key} 的消息内容为空")
+                        continue
+                    
+                    # 更新计数器
+                    message_count += 1
+                    current_round = ((message_count - 1) // len(selected_agents)) + 1
+                    
+                    print(f"📝 后台生成: 第{current_round}轮 - {agent_info['name']} ({message_count})")
+                    
+                    # 在后台生成TTS
+                    audio_data = None
+                    audio_duration = 0.0
+                    if tts_enabled:
+                        try:
+                            print(f"🔊 后台生成TTS: {agent_info['name']}")
+                            audio_data, audio_duration = generate_tts_async(message, agent_key)
+                            if audio_data:
+                                print(f"✅ TTS生成完成: {agent_info['name']}, 时长: {audio_duration:.2f}秒")
+                            else:
+                                print(f"⚠️ TTS生成失败: {agent_info['name']}")
+                        except Exception as e:
+                            print(f"❌ TTS生成异常: {agent_info['name']}, {e}")
+                    
+                    # 创建消息项并加入队列
+                    message_item = MessageItem(
+                        agent_key=agent_key,
+                        message=message,
+                        agent_info=agent_info,
+                        round_num=current_round,
+                        audio_data=audio_data,
+                        audio_duration=audio_duration,
+                        generation_order=message_count
+                    )
+                    
+                    # 线程安全地加入队列
+                    debate_manager.message_queue.put(message_item)
+                    debate_manager.messages_generated = message_count
+                    
+                    print(f"✅ 消息已加入队列: {agent_info['name']} (队列大小: {debate_manager.message_queue.qsize()})")
+        
+        debate_manager.generation_complete = True
+        debate_manager.is_generating = False
+        print(f"🎉 后台生成完成! 共生成 {message_count} 条消息")
+        
+    except Exception as e:
+        print(f"❌ 后台生成线程出错: {e}")
+        debate_manager.generation_complete = True
+        debate_manager.is_generating = False
+
+def display_message_with_audio(message_item: MessageItem, is_latest: bool = False):
+    """显示消息并播放语音"""
+    icon = message_item.agent_info["icon"]
+    color = message_item.agent_info["color"]
+    name = message_item.agent_info["name"]
+    round_num = message_item.round_num
+    message = message_item.message
     
     # 为最新消息添加特殊样式
     border_style = f"border-left: 5px solid {color}; box-shadow: 0 2px 8px rgba(0,0,0,0.1);" if is_latest else f"border-left: 4px solid {color};"
@@ -54,52 +218,72 @@ def display_agent_message(agent_key, message, agent_info, round_num=None, is_lat
     </div>
     """, unsafe_allow_html=True)
     
-    # 生成并显示音频 - 使用st.audio（修复版）
-    tts_module = get_tts_module()
-    if tts_module and st.session_state.get('tts_enabled', True):
+    # 播放语音
+    if message_item.audio_data and st.session_state.get('tts_enabled', True):
         try:
-            # 生成语音
-            audio_data = tts_module.text_to_speech(message, agent_key)
-            if audio_data:
-                # 将base64数据转换为bytes
-                audio_bytes = base64.b64decode(audio_data)
+            # 将base64数据转换为bytes
+            audio_bytes = base64.b64decode(message_item.audio_data)
+            
+            # 创建音频播放区域
+            with st.container():
+                # 创建两列布局：图标列和音频列
+                audio_col1, audio_col2 = st.columns([1, 8])
                 
-                # 创建音频播放区域
-                with st.container():
-                    # 创建两列布局：图标列和音频列
-                    audio_col1, audio_col2 = st.columns([1, 8])
-                    
-                    with audio_col1:
-                        # 显示音频图标，使用角色颜色
-                        st.markdown(f"""
-                        <div style="
-                            color: {color}; 
-                            font-size: 1.2rem; 
-                            text-align: center;
-                            padding-top: 8px;
-                        ">🔊</div>
-                        """, unsafe_allow_html=True)
-                    
-                    with audio_col2:
-                        # 使用streamlit原生音频组件
-                        st.audio(audio_bytes, format="audio/mp3", start_time=0,autoplay=True)
+                with audio_col1:
+                    # 显示音频图标，使用角色颜色
+                    st.markdown(f"""
+                    <div style="
+                        color: {color}; 
+                        font-size: 1.2rem; 
+                        text-align: center;
+                        padding-top: 8px;
+                    ">🔊</div>
+                    """, unsafe_allow_html=True)
+                
+                with audio_col2:
+                    # 使用streamlit原生音频组件，自动播放
+                    st.audio(audio_bytes, format="audio/mp3", start_time=0, autoplay=True)
+                
+                # 使用实际音频时长或备用估算
+                if message_item.audio_duration > 0:
+                    duration = message_item.audio_duration + 3  # 加3秒缓冲
+                    duration_source = "实际"
+                else:
+                    # 备用估算方法
+                    clean_text = message.replace(f'{name}:', '').strip()
+                    duration = max(3, len(clean_text) * 0.5)
+                    duration_source = "估算"
+                
+                # 显示播放进度
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i in range(int(duration)):
+                    progress = (i + 1) / duration
+                    progress_bar.progress(progress)
+                    status_text.text(f"⏱️ {name} 发言中... ({i+1:.0f}/{duration:.0f}秒) [{duration_source}]")
+                    time.sleep(1)
+                
+                # 清理进度显示
+                progress_bar.empty()
+                status_text.empty()
                 
         except Exception as e:
-            print(f"⚠️ 语音生成失败: {e}")
-            # 显示错误信息（可选）
-            st.caption(f"⚠️ {name}的语音生成失败: {str(e)}")
+            print(f"⚠️ 语音播放失败: {e}")
+            st.warning(f"⚠️ {name} 的语音播放遇到问题")
+            time.sleep(2)  # 即使失败也等待2秒
 
 def display_rag_status(rag_enabled, max_refs_per_agent=3):
     """显示联网搜索状态信息"""
     if rag_enabled:
-        st.success(f"🌐 Kimi联网搜索已启用 | 每专家最多 {max_refs_per_agent} 篇参考文献")
+        st.success(f"🌐 联网搜索已启用，每专家最多 {max_refs_per_agent} 篇参考资料")
     else:
         st.info("🌐 联网搜索已禁用，将基于内置知识辩论")
 
 def display_tts_status(tts_enabled):
     """显示TTS状态信息"""
     if tts_enabled:
-        st.success("🔊 自动语音播放已启用")
+        st.success("🔊 语音播放已启用")
     else:
         st.info("🔊 语音播放已禁用")
 
@@ -181,37 +365,9 @@ def preload_rag_for_all_agents(selected_agents, debate_topic, rag_config):
         st.error(f"❌ 预加载联网搜索资料失败: {str(e)}")
         return {"success": False, "message": f"预加载失败: {str(e)}"}
 
-def test_audio_functionality():
-    """测试音频功能"""
-    st.subheader("🧪 音频功能测试")
-    
-    if st.button("测试TTS功能"):
-        tts_module = get_tts_module()
-        if tts_module:
-            test_text = "这是一个音频测试，检查语音合成是否正常工作。"
-            
-            with st.spinner("正在生成测试音频..."):
-                try:
-                    audio_data = tts_module.text_to_speech(test_text, "tech_expert")
-                    if audio_data:
-                        st.success("✅ TTS功能正常")
-                        
-                        # 显示测试音频
-                        audio_bytes = base64.b64decode(audio_data)
-                        st.audio(audio_bytes, format="audio/mp3")
-                        st.info("👆 如果能听到声音，说明音频功能正常工作")
-                        
-                    else:
-                        st.error("❌ TTS功能异常")
-                except Exception as e:
-                    st.error(f"❌ TTS测试失败: {e}")
-        else:
-            st.error("❌ TTS模块未初始化")
-            st.info("请检查 SILICONCLOUD_API_KEY 环境变量是否设置")
-
 def generate_response(input_text, max_rounds, selected_agents, rag_config, tts_enabled=True):
     """
-    生成多Agent辩论响应（使用st.audio修复版）
+    生成多Agent辩论响应（真正异步版：API请求和播放同时进行）
     
     Args:
         input_text (str): 辩论主题
@@ -220,6 +376,11 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config, tts_e
         rag_config (dict): RAG配置，包含用户的所有设置
         tts_enabled (bool): 是否启用TTS
     """
+    # 初始化session state
+    initialize_session_state()
+    debate_manager = st.session_state.debate_manager
+    debate_manager.reset()
+    
     # 验证输入参数
     if not selected_agents:
         st.error("❌ 没有选择任何角色")
@@ -242,6 +403,9 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config, tts_e
     
     # 保存TTS状态到session_state
     st.session_state['tts_enabled'] = tts_enabled
+    
+    # 计算总期望消息数
+    debate_manager.total_expected_messages = max_rounds * len(selected_agents)
     
     # 提取用户RAG设置
     max_refs_user_set = rag_config.get('max_refs_per_agent', 3)
@@ -316,91 +480,124 @@ def generate_response(input_text, max_rounds, selected_agents, rag_config, tts_e
         "controversial_points": []
     }
     
-    # 简化的进度显示
+    # 创建显示容器
     st.subheader("💬 辩论实况")
-    progress_placeholder = st.empty()
     
-    total_expected_messages = max_rounds * len(selected_agents)
-    message_count = 0
-    current_round = 1
+    # 状态显示区域
+    status_container = st.container()
     
-    # 开始辩论流
+    # 消息显示区域
+    messages_container = st.container()
+    
+    # 清空已显示的消息
+    st.session_state.displayed_messages = []
+    
+    # 启动后台生成线程
+    with status_container:
+        st.info("🚀 正在启动异步辩论生成...")
+    
+    generation_thread = threading.Thread(
+        target=background_generation_worker,
+        args=(inputs, current_graph, selected_agents, tts_enabled, debate_manager),
+        daemon=True
+    )
+    generation_thread.start()
+    
+    # 主循环：实时显示和播放
     try:
-        for update in current_graph.stream(inputs, {"recursion_limit": 200}, stream_mode="updates"):
-            if not update:
-                continue
+        with status_container:
+            status_col1, status_col2, status_col3 = st.columns(3)
+            generation_status = status_col1.empty()
+            queue_status = status_col2.empty()
+            playback_status = status_col3.empty()
+        
+        with messages_container:
+            messages_display = st.container()
+        
+        # 循环处理消息队列
+        while True:
+            # 更新状态显示
+            generation_status.metric(
+                "生成进度", 
+                f"{debate_manager.messages_generated}/{debate_manager.total_expected_messages}"
+            )
+            queue_status.metric(
+                "队列消息", 
+                f"{debate_manager.message_queue.qsize()}"
+            )
+            playback_status.metric(
+                "已播放", 
+                f"{len(st.session_state.displayed_messages)}"
+            )
+            
+            # 检查是否有新消息可以播放
+            if (len(st.session_state.displayed_messages) < debate_manager.message_queue.qsize() and 
+                not debate_manager.is_playing):
                 
-            # 检查每个可能的Agent节点
-            for agent_key in selected_agents:
-                if agent_key in update and update[agent_key] is not None:
-                    agent_update = update[agent_key]
+                try:
+                    # 从队列中获取下一条消息（非阻塞）
+                    message_item = None
+                    temp_messages = []
                     
-                    # 确保agent_update包含messages键
-                    if not isinstance(agent_update, dict) or "messages" not in agent_update:
-                        print(f"⚠️ {agent_key} 的更新数据格式无效: {agent_update}")
-                        continue
+                    # 获取队列中的所有消息，找到按顺序应该播放的那条
+                    while not debate_manager.message_queue.empty():
+                        try:
+                            temp_messages.append(debate_manager.message_queue.get_nowait())
+                        except queue.Empty:
+                            break
                     
-                    messages = agent_update["messages"]
+                    # 按生成顺序排序
+                    temp_messages.sort(key=lambda x: x.generation_order)
                     
-                    # 确保messages不为空
-                    if not messages or len(messages) == 0:
-                        print(f"⚠️ {agent_key} 的消息列表为空")
-                        continue
+                    # 把所有消息放回队列
+                    for msg in temp_messages:
+                        debate_manager.message_queue.put(msg)
                     
-                    # 安全获取消息对象
-                    try:
-                        message_obj = messages[0]
-                    except (IndexError, TypeError) as e:
-                        print(f"⚠️ 无法获取 {agent_key} 的消息: {e}")
-                        continue
+                    # 找到下一条应该播放的消息
+                    next_play_order = len(st.session_state.displayed_messages) + 1
+                    for msg in temp_messages:
+                        if msg.generation_order == next_play_order:
+                            message_item = msg
+                            break
                     
-                    agent_info = AVAILABLE_ROLES.get(agent_key)
-                    if not agent_info:
-                        print(f"⚠️ 未找到 {agent_key} 的角色信息")
-                        continue
-                    
-                    # 获取消息内容
-                    if hasattr(message_obj, 'content'):
-                        message = message_obj.content
-                    else:
-                        message = str(message_obj)
-                    
-                    # 确保消息不为空
-                    if not message or message.strip() == "":
-                        print(f"⚠️ {agent_key} 的消息内容为空")
-                        continue
-                    
-                    # 更新计数器
-                    message_count += 1
-                    current_round = ((message_count - 1) // len(selected_agents)) + 1
-                    
-                    # 显示消息（包含语音）- 使用修复后的函数
-                    is_latest = True  # 新消息总是最新的
-                    display_agent_message(agent_key, message, agent_info, current_round, is_latest)
-                    
-                    # 简化的进度显示
-                    with progress_placeholder:
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("当前轮次", f"{current_round}/{max_rounds}")
-                        with col2:
-                            st.metric("总发言数", f"{message_count}")
-                        with col3:
-                            progress = message_count / total_expected_messages
-                            st.metric("进度", f"{int(progress * 100)}%")
-                    
-                    # 添加小延迟增强观感
-                    time.sleep(1.2)
-                    
+                    if message_item:
+                        debate_manager.is_playing = True
+                        
+                        with messages_display:
+                            # 显示消息并播放语音
+                            is_latest = True
+                            display_message_with_audio(message_item, is_latest)
+                            
+                            # 记录已显示的消息
+                            st.session_state.displayed_messages.append(message_item)
+                        
+                        debate_manager.is_playing = False
+                        
+                        print(f"✅ 播放完成: {message_item.agent_info['name']} (第{message_item.generation_order}条)")
+                
+                except Exception as e:
+                    print(f"❌ 播放消息时出错: {e}")
+                    debate_manager.is_playing = False
+                    time.sleep(1)
+            
+            # 检查是否完成
+            if (debate_manager.generation_complete and 
+                len(st.session_state.displayed_messages) >= debate_manager.total_expected_messages):
+                break
+            
+            # 短暂等待，避免过度占用CPU
+            time.sleep(0.5)
+        
+        # 等待生成线程完成
+        generation_thread.join(timeout=5)
+        
+        # 完成提示
+        with status_container:
+            st.success("🎉 辩论圆满结束！")
+        
     except Exception as e:
         st.error(f"辩论过程中出现错误: {str(e)}")
-        st.error("详细错误信息：")
-        st.code(str(e))
-        print(f"❌ 辩论流程错误: {e}")
-        return
-    
-    # 完成提示
-    st.success("🎉 辩论圆满结束！")
+        print(f"❌ 主循环错误: {e}")
 
 # 页面配置
 st.set_page_config(
@@ -459,10 +656,10 @@ st.markdown("""
 st.markdown("""
 <h1 class="main-header">🎭 多角色AI辩论平台</h1>
 <div style="text-align: center; margin-bottom: 2rem;">
-    <span class="feature-badge">🌐 Kimi联网搜索</span>
-    <span class="feature-badge">🔊 智能语音播放</span>
+    <span class="feature-badge">🌐 联网搜索</span>
+    <span class="feature-badge">🔊 精确语音</span>
     <span class="feature-badge">🚀 智能缓存</span>
-    <span class="feature-badge">🎯 实时辩论</span>
+    <span class="feature-badge">⚡ 真正异步</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -479,29 +676,24 @@ with st.sidebar:
     st.subheader("🔊 语音播放设置")
     
     tts_enabled = st.checkbox(
-        "🎤 启用自动语音播放",
+        "🎤 启用语音播放",
         value=True,
         help="为每条发言自动生成并播放语音"
     )
     
     if tts_enabled:
         st.success("🔊 语音播放已启用")
-        st.info("💡 每个角色使用不同的声音")
-        st.info("🎵 使用 st.audio 原生组件播放")
-        
-        # 添加音频测试按钮
-        if st.button("🧪 测试音频功能"):
-            st.session_state['show_audio_test'] = True
+        st.info("💡 API请求和语音播放完全异步进行，使用精确音频时长")
     else:
         st.warning("🔇 语音播放已禁用")
     
     st.markdown("---")
     
     # 联网搜索设置区域
-    st.subheader("🌐 Kimi联网搜索设置")
+    st.subheader("🌐 联网搜索设置")
     
     rag_enabled = st.checkbox(
-        "🔍 启用Kimi智能联网搜索",
+        "🔍 启用智能联网搜索",
         value=True,
         help="为每位专家进行实时联网搜索相关资料"
     )
@@ -516,7 +708,7 @@ with st.sidebar:
             help="设置每个专家在联网搜索中获取的最大资料数量"
         )
         
-        st.success("⚡ Kimi联网搜索已启用")
+        st.success("⚡ 联网搜索已启用")
         
         # 缓存管理
         if st.button("🗑️ 清理缓存", help="清理所有缓存的联网搜索资料"):
@@ -564,16 +756,9 @@ with st.sidebar:
                 st.markdown(f"**关注重点**: {agent['focus']}")
                 st.markdown(f"**典型观点**: {agent['perspective']}")
                 if rag_enabled and agent_key in selected_agents:
-                    st.markdown(f"**联网搜索**: {max_refs_per_agent} 篇资料")
+                    st.markdown(f"**参考资料**: {max_refs_per_agent} 篇")
                 if tts_enabled:
                     st.markdown(f"**专属声音**: 已配置")
-
-# 音频测试区域（可选显示）
-if st.session_state.get('show_audio_test', False):
-    test_audio_functionality()
-    if st.button("关闭测试"):
-        st.session_state['show_audio_test'] = False
-    st.markdown("---")
 
 # 主要内容区域
 col1, col2 = st.columns([2, 1])
@@ -640,12 +825,12 @@ with col2:
         
         if rag_enabled:
             total_refs = len(selected_agents) * max_refs_per_agent
-            st.success("⚡ Kimi联网搜索已启用")
+            st.success("⚡ 联网搜索已启用")
             st.info(f"总资料数：{total_refs} 篇")
             
         if tts_enabled:
             st.success("🔊 语音播放已启用")
-            st.info(f"预计语音：{total_messages} 条")
+            st.info(f"异步语音：{total_messages} 条")
 
 # 辩论控制区域
 st.markdown("---")
@@ -668,7 +853,7 @@ if not can_start:
 
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
-    button_text = f"🎭 开始辩论（{max_rounds}轮）"
+    button_text = f"🎭 开始异步辩论（{max_rounds}轮）"
     
     start_debate = st.button(
         button_text,
@@ -691,9 +876,9 @@ if start_debate and can_start:
     
     feature_list = []
     if rag_enabled:
-        feature_list.append(f"🌐 Kimi联网搜索 (每专家{max_refs_per_agent}篇)")
+        feature_list.append(f"🌐 联网搜索 (每专家{max_refs_per_agent}篇)")
     if tts_enabled:
-        feature_list.append("🔊 st.audio语音播放")
+        feature_list.append("🔊 真正异步播放")
     
     if feature_list:
         st.info(f"✨ 启用特性: {' | '.join(feature_list)}")
@@ -710,7 +895,7 @@ if start_debate and can_start:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; opacity: 0.7;'>
-    🎭 多角色AI辩论平台 - 使用 st.audio 音频播放<br>
+    🎭 多角色AI辩论平台 - 真正异步版（精确音频时长）<br>
     🔗 Powered by <a href='https://platform.deepseek.com/'>DeepSeek</a> & <a href='https://www.moonshot.cn/'>Kimi</a> & <a href='https://siliconflow.cn/'>SiliconCloud</a> & <a href='https://streamlit.io/'>Streamlit</a>
 </div>
 """, unsafe_allow_html=True)
